@@ -14,6 +14,28 @@ import (
 // line, so that they stay paragraphs; alignment, fonts and colors have no
 // Markdown and are left out.
 func (t Text) Markdown() string {
+	return t.markdown(false)
+}
+
+// ComposerMarkdown preserves the editor's line separators in a message.
+func (t Text) ComposerMarkdown(object func(Attachment) string) string {
+	if object != nil {
+		// An application can export a semantic object as a message token.
+		delta := 0
+		for at, r := range t.Runs(0, t.Len()) {
+			if r.Attributes.Attachment != nil {
+				value := object(*r.Attributes.Attachment)
+				if value != "" {
+					t = t.ReplaceString(at+delta, at+delta+1, value, Attributes{})
+					delta += utf8.RuneCountInString(value) - 1
+				}
+			}
+		}
+	}
+	return strings.ReplaceAll(t.markdown(true), "\u2028", "\n")
+}
+
+func (t Text) markdown(composer bool) string {
 	var b strings.Builder
 	var paras []Paragraph
 	for _, p := range t.Paragraphs() {
@@ -25,7 +47,7 @@ func (t Text) Markdown() string {
 	for i := 0; i < len(paras); i++ {
 		p := paras[i]
 		st := p.Style
-		if i > 0 && !(st.List != NoList && prevList) {
+		if i > 0 && !composer && !(st.List != NoList && prevList) {
 			b.WriteString("\n\n")
 		} else if i > 0 {
 			b.WriteByte('\n')
@@ -46,7 +68,7 @@ func (t Text) Markdown() string {
 					fence += "`"
 				}
 			}
-			b.WriteString(quote + fence + "\n")
+			b.WriteString(quote + fence + st.CodeLanguage + "\n")
 			for ; i < len(paras) && paras[i].Style.CodeBlock; i++ {
 				b.WriteString(quote + plainOf(paras[i]) + "\n")
 			}
@@ -91,7 +113,11 @@ func (t Text) Markdown() string {
 			b.WriteString(s)
 			continue
 		}
-		writeMarkdownRuns(&b, p.Runs)
+		if composer && len(p.Runs) == 1 && p.Runs[0].Attributes == (Attributes{}) {
+			b.WriteString(p.Runs[0].Text)
+		} else {
+			writeMarkdownRuns(&b, p.Runs)
+		}
 	}
 	return b.String()
 }

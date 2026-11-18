@@ -930,6 +930,7 @@ type state struct {
 	// its value was let go over no element taking it, at (missX, missY).
 	dragValue    any
 	dragFn       func() any
+	dragPreview  dragPreview
 	accepts      func(any) bool
 	droppedValue any
 	hasDropped   bool
@@ -1026,6 +1027,7 @@ func (rt *engine) lookState(id uint64) (s *state, built bool) {
 	s.hoverBuilt = false
 	// What the element drags and takes, as this pass asks.
 	s.dragValue, s.dragFn, s.accepts = nil, nil, nil
+	s.dragPreview = dragPreview{}
 	s.dataSource, s.dataTarget = nil, nil
 	return s, built
 }

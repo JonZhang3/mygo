@@ -2,6 +2,7 @@ package ui
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/egoist/mygo/internal/platform"
 
@@ -249,6 +250,27 @@ func (k TextKey) valid() *editor {
 // before it, which may be ahead of the bound value: that takes what is
 // typed as the next frame is built.
 func (k TextKey) Text() string { return k.valid().String() }
+
+// Composing reports whether an input method has marked text when the key arrives.
+func (k TextKey) Composing() bool { return k.valid().compose != "" }
+
+// InsertText replaces the current selection as one undoable edit.
+func (k TextKey) InsertText(s string) {
+	ed := k.valid()
+	if ed.readOnly || ed.compose != "" {
+		return
+	}
+	ed.record(false)
+	start, end := ed.selection()
+	ed.replace(start, end, strings.ReplaceAll(s, "\r\n", "\n"))
+	ed.hasDesired = false
+	if ed.area != nil {
+		ed.area.reveal = true
+	}
+	if ed.client != nil {
+		ed.client.publish()
+	}
+}
 
 // SetText replaces the text of the input, and its bound value, as the app
 // does by setting the value as the view is built: a composer clears the

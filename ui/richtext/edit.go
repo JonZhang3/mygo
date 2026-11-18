@@ -242,11 +242,7 @@ func (v *view) enter() {
 	}
 	if !v.opts.NoMarkdown && a == z && v.caret == pe && !st.CodeBlock {
 		if line := v.lineOf(p); strings.HasPrefix(line, "```") && !strings.Contains(line[3:], "`") {
-			v.edit(func(e *Edit) {
-				e.ReplaceString(ps, pe, "", Attributes{})
-				e.FormatParagraphs(ps, ps, func(s *ParagraphStyle) { *s = ParagraphStyle{CodeBlock: true, Indent: s.Indent, ID: s.ID} })
-				e.Select(ps, ps)
-			})
+			v.startCodeBlock(ps, pe, strings.TrimSpace(line[3:]))
 			return
 		}
 	}
@@ -281,6 +277,16 @@ func (v *view) enter() {
 	v.coalesce = false
 }
 
+func (v *view) startCodeBlock(start, end int, language string) {
+	v.edit(func(e *Edit) {
+		e.ReplaceString(start, end, "", Attributes{})
+		e.FormatParagraphs(start, start, func(s *ParagraphStyle) {
+			*s = ParagraphStyle{CodeBlock: true, CodeLanguage: language, Indent: s.Indent, ID: s.ID}
+		})
+		e.Select(start, start)
+	})
+}
+
 // typed runs the Markdown shortcuts after s was typed at the caret.
 func (v *view) typed(s string) {
 	if v.opts.NoMarkdown || v.opts.ReadOnly || utf8.RuneCountInString(s) != 1 {
@@ -289,10 +295,24 @@ func (v *view) typed(s string) {
 	p := v.shown.paraAt(v.caret)
 	ps := v.shown.paraStart(p)
 	if v.para(p).style.CodeBlock {
+		if v.opts.InstantCodeFence && s == "`" && p > 0 && v.para(p-1).style.CodeBlock &&
+			v.caret == ps+3 && v.lineOf(p) == "```" {
+			v.edit(func(e *Edit) {
+				e.ReplaceString(ps, v.caret, "", Attributes{})
+				e.FormatParagraphs(ps, ps, func(style *ParagraphStyle) {
+					style.CodeBlock, style.CodeLanguage = false, ""
+				})
+				e.Select(ps, ps)
+			})
+		}
 		return
 	}
 	before := []rune(v.shown.Slice(ps, v.caret).String())
 	if len(before) == 0 {
+		return
+	}
+	if v.opts.InstantCodeFence && string(before) == "```" && v.caret == ps+v.para(p).n {
+		v.startCodeBlock(ps, v.caret, "")
 		return
 	}
 	if s == " " {

@@ -29,7 +29,8 @@ type diffModel struct {
 	// same line with one, and the empty line an editor starts after a
 	// final newline is no line. An edited diff compares lines without
 	// them, as typing after the final newline adds that line.
-	eol bool
+	eol                   bool
+	ignoreHorizontalSpace bool
 	// job compares the whole texts off the main thread, nil when none
 	// does: until it is done there are no hunks, and the texts are the
 	// buffers' as they are now.
@@ -43,6 +44,14 @@ type diffJob struct {
 	oldVer, newVer   uint64
 	hunks            []diff.Hunk
 	done             atomic.Bool // hunks are set
+}
+
+func (d *diffModel) compareSpace(ignore bool) {
+	if d.ignoreHorizontalSpace != ignore {
+		d.ignoreHorizontalSpace = ignore
+		d.oldVer = ^uint64(0)
+		d.job = nil
+	}
 }
 
 // diffPad is how many unchanged lines around an edit are compared
@@ -128,7 +137,7 @@ func (d *diffModel) update() bool {
 		}
 		return changed
 	}
-	if oldVer != d.oldVer || newText.Len() == 0 || d.newText.Len() == 0 {
+	if d.ignoreHorizontalSpace || oldVer != d.oldVer || newText.Len() == 0 || d.newText.Len() == 0 {
 		d.full(oldText, newText, oldVer, newVer)
 		return true
 	}
@@ -210,7 +219,7 @@ func (d *diffModel) full(oldText, newText rope.Text, oldVer, newVer uint64) {
 	d.hunks = nil
 	j := &diffJob{oldText: oldText, newText: newText, oldVer: oldVer, newVer: newVer}
 	d.job = j
-	cmp := diffModel{eol: d.eol}
+	cmp := diffModel{eol: d.eol, ignoreHorizontalSpace: d.ignoreHorizontalSpace}
 	old, new := d.old, d.new
 	startDiff(func() {
 		j.hunks = cmp.compare(j.oldText, j.newText)
@@ -225,9 +234,18 @@ func (d *diffModel) full(oldText, newText rope.Text, oldVer, newVer uint64) {
 var startDiff = func(job func()) { go job() }
 
 // compare returns the hunks between the whole texts, from any goroutine:
-// it reads only eol of d.
+// it reads only the comparison options of d.
 func (d *diffModel) compare(oldText, newText rope.Text) []diff.Hunk {
-	return diff.Lines(d.lines(oldText, 0, oldText.LineCount()), d.lines(newText, 0, newText.LineCount()))
+	a, b := d.lines(oldText, 0, oldText.LineCount()), d.lines(newText, 0, newText.LineCount())
+	if d.ignoreHorizontalSpace {
+		strip := strings.NewReplacer(" ", "", "\t", "")
+		for _, lines := range [][]string{a, b} {
+			for i := range lines {
+				lines[i] = strip.Replace(lines[i])
+			}
+		}
+	}
+	return diff.Lines(a, b)
 }
 
 // ropeLines returns lines from to to of r: none of an empty text, which

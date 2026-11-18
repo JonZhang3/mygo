@@ -1473,3 +1473,8 @@ func shortcutText(a string) string {
 	b.WriteString(key)
 	return b.String()
 }
+
+// ShortcutHint formats a key binding as a menu label without registering it.
+func ShortcutHint(mods Modifiers, key Key) string {
+	return shortcutText(accelerator(mods, key))
+}

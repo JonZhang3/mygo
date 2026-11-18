@@ -13,18 +13,30 @@ const scrollbarWidth = 10
 // input takes the editor's input as it comes: keys, text, edit commands,
 // the pointer and the wheel.
 func (v *view) input(ev ui.InputEvent) bool {
-	// The app is asked first, before the editor takes the document's state
-	// and gives its own back: what the app does to the document is kept.
-	if ev.Kind == ui.InputKeyDown && v.opts.OnKey != nil && v.opts.OnKey(ev.Key, ev.Mods) {
-		return true
-	}
+	// Give the app first refusal on menu commands before syncing the document.
 	if ev.Kind == ui.InputCommand && v.opts.OnCommand != nil && v.opts.OnCommand(ev.Text) {
 		return true
 	}
 	v.sync()
-	defer v.publish()
+	version := v.doc.Version()
+	defer func() {
+		v.publish()
+		if v.opts.OnEdit != nil && version != v.doc.Version() && v.compose == "" {
+			v.opts.OnEdit()
+		}
+	}()
 	switch ev.Kind {
 	case ui.InputKeyDown:
+		if v.opts.OnKey != nil && v.compose == "" {
+			v.publish()
+			if v.opts.OnKey(ev.Key, ev.Mods) {
+				v.sync()
+				v.blinkStart = ev.Time
+				return true
+			}
+		} else if v.opts.OnKey != nil && (ev.Key == ui.KeyEnter || ev.Key == ui.KeyEscape || ev.Key == ui.KeyTab) {
+			return true
+		}
 		if v.key(ev.Key, ev.Mods) {
 			v.blinkStart = ev.Time
 			return true
@@ -529,18 +541,27 @@ func (v *view) editCommand(name string) bool {
 	switch name {
 	case "copy":
 		if a != z {
-			v.copySelection()
+			if v.opts.OnClipboard == nil || !v.opts.OnClipboard(name) {
+				v.copySelection()
+			}
 		}
 		return true
 	case "cut":
 		if a != z && !v.opts.ReadOnly {
-			v.copySelection()
+			if v.opts.OnClipboard == nil || !v.opts.OnClipboard(name) {
+				v.copySelection()
+			}
 			v.deleteRange(a, z, false)
 		}
 		return true
 	case "paste", "pasteAndMatchStyle":
 		if !v.opts.ReadOnly {
-			v.paste(name == "pasteAndMatchStyle")
+			v.publish()
+			if v.opts.OnClipboard == nil || !v.opts.OnClipboard(name) {
+				v.paste(name == "pasteAndMatchStyle")
+			} else {
+				v.sync()
+			}
 		}
 		return true
 	case "selectAll":

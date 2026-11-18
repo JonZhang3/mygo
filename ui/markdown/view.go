@@ -15,6 +15,12 @@ import (
 // the app's state and give it to every view of a kind, as the messages of
 // a chat.
 type Options struct {
+	// Document is an optional pre-parsed, exclusively owned document for a
+	// finished view. Its source and extensions must match View.
+	Document *parser.Document
+	// BlockElement observes top-level blocks for source/preview scroll sync.
+	BlockElement func(block *parser.Block, element ui.Element)
+
 	// Theme is the look: DefaultTheme of the window's theme when nil,
 	// whose values those the theme leaves zero take.
 	Theme *Theme
@@ -307,8 +313,13 @@ func build(c *ui.Context, src string, o *Options, streaming bool) ui.Element {
 	if ext == 0 {
 		ext = parser.Default
 	}
+	prepared := !streaming && o.Document != nil && o.Document.Source() == src
 	documentChanged := st.doc == nil || st.ext != ext
-	if documentChanged {
+	if prepared && st.doc != o.Document {
+		st.doc, st.ext = o.Document, ext
+		st.forget()
+		documentChanged = true
+	} else if documentChanged {
 		st.doc, st.ext = parser.New(ext), ext
 		st.paras, st.tasks = st.paras[:0], st.tasks[:0]
 	}
@@ -323,7 +334,9 @@ func build(c *ui.Context, src string, o *Options, streaming bool) ui.Element {
 		st.forget()
 		documentChanged = true
 	}
-	st.doc.Set(src[:shown])
+	if !prepared {
+		st.doc.Set(src[:shown])
+	}
 	if o.Anchor != "" && (documentChanged || st.anchor != o.Anchor || st.anchorVersion != o.AnchorVersion) {
 		st.scrollTo = st.anchorNamed(strings.TrimPrefix(o.Anchor, "#"))
 	}
@@ -428,6 +441,9 @@ func (st *viewState) blocks(c *ui.Context, parent int, tight bool, base spanStyl
 		}
 		el := st.block(c, j, tight, base)
 		st.fadeIn(el, b)
+		if parent == 0 && st.o.BlockElement != nil {
+			st.o.BlockElement(b, el)
+		}
 		if top > 0 {
 			el.Margin(top, 0, 0, 0)
 		}

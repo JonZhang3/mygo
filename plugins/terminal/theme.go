@@ -17,6 +17,9 @@ type Theme struct {
 	// opaque, when zero. SelectionText colors the selected text: its own
 	// colors when zero.
 	Selection, SelectionText ui.Color
+	// SelectionInactive colors the selection while the terminal lacks focus.
+	// A zero color keeps the active selection color.
+	SelectionInactive ui.Color
 	// Search highlights the matches of a search (Terminal.Search) and
 	// SearchText colors their text, as Ghostty's search-background and
 	// search-foreground; SearchSelected and SearchSelectedText the selected

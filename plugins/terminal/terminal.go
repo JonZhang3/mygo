@@ -85,6 +85,8 @@ type Options struct {
 	// to a UTF-8 locale when no locale is set, as when the app starts from
 	// the Finder.
 	Env []string
+	// CleanEnv limits the subprocess environment to terminal defaults and Env.
+	CleanEnv bool
 	// ShellIntegration marks a local zsh's prompt so resizing can clear its
 	// old layout before zsh redraws it, including right and multiline prompts.
 	// User startup files are sourced normally and are never modified. Other
@@ -251,6 +253,16 @@ type Options struct {
 	// opens with the system (Context.OpenURL), and a path it leaves does
 	// nothing.
 	OpenLink func(link string) bool
+	// LinkAvailable validates the hovered candidate for an application-managed link.
+	// It must return immediately. The host can invalidate the view after a lookup.
+	LinkAvailable func(link string) bool
+	// OnLinkClick handles a primary click on a candidate after mouse-up.
+	OnLinkClick func(link string, event ui.InputEvent)
+	// LinkClickModifiers accepts the host's shortcuts in addition to a plain
+	// primary click. Without it, the conventional Cmd and Shift+Cmd apply.
+	LinkClickModifiers func(ui.Modifiers) bool
+	// LegacyShiftEnter sends Escape followed by Return without Kitty encoding.
+	LegacyShiftEnter bool
 	// OnPaste sees a paste of the clipboard (ActionPaste's keys, a Paste
 	// menu item, a secondary click with RightClickPaste) before the
 	// program gets it, on the main thread, with every format the
@@ -695,7 +707,7 @@ func New(opts Options) (*Terminal, error) {
 	if dir == "" {
 		dir, _ = os.UserHomeDir()
 	}
-	t.launch = &pty.Options{Path: path, Args: args, Dir: dir, Env: environment(opts.Env)}
+	t.launch = &pty.Options{Path: path, Args: args, Dir: dir, Env: environment(opts.Env, opts.CleanEnv)}
 	if opts.ShellIntegration && filepath.Base(path) == "zsh" {
 		t.launch.Env, t.shellDir, err = zshEnvironment(t.launch.Env)
 		if err != nil {
@@ -808,8 +820,11 @@ func command(cmd []string) (path string, args []string, err error) {
 
 // environment returns the environment of the program: this process's with
 // the terminal's variables and extra.
-func environment(extra []string) []string {
-	env := os.Environ()
+func environment(extra []string, clean bool) []string {
+	var env []string
+	if !clean {
+		env = os.Environ()
+	}
 	set := func(kv string) {
 		k, _, _ := strings.Cut(kv, "=")
 		for i, e := range env {
@@ -822,7 +837,7 @@ func environment(extra []string) []string {
 	}
 	set("TERM=xterm-256color")
 	set("COLORTERM=truecolor")
-	if runtime.GOOS != "windows" && os.Getenv("LANG") == "" && os.Getenv("LC_ALL") == "" && os.Getenv("LC_CTYPE") == "" {
+	if runtime.GOOS != "windows" && (clean || os.Getenv("LANG") == "" && os.Getenv("LC_ALL") == "" && os.Getenv("LC_CTYPE") == "") {
 		set("LANG=en_US.UTF-8")
 	}
 	for _, kv := range extra {
@@ -952,6 +967,17 @@ func (t *Terminal) finish() {
 // Done is closed once the program exited (or Conn ended).
 func (t *Terminal) Done() <-chan struct{} { return t.done }
 
+// ProcessID returns the local PTY's child PID, or zero before it starts or
+// when the terminal is backed by a connection.
+func (t *Terminal) ProcessID() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.proc == nil {
+		return 0
+	}
+	return t.proc.Pid()
+}
+
 // ExitCode returns the exit code of the program once it exited: 128 plus
 // the signal's number for a program a signal killed, -1 for one that
 // could not start.
@@ -1072,6 +1098,11 @@ func (t *Terminal) schemeChanged(old, theme *Theme) {
 func (t *Terminal) SetTheme(theme, dark *Theme) {
 	t.mu.Lock()
 	t.opts.Theme, t.opts.DarkTheme = theme, dark
+	if theme != nil && dark == nil {
+		// An explicitly resolved theme also applies to the remote emulator
+		// when the view is currently hidden.
+		t.themeConn(theme)
+	}
 	t.mu.Unlock()
 	t.redraw()
 }

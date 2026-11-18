@@ -29,6 +29,18 @@ func (t *Terminal) Paste(text string) {
 	}
 }
 
+// PasteBracketed sends a draft only when the active program accepts
+// bracketed paste, so a multiline draft cannot fall back to typed commands.
+func (t *Terminal) PasteBracketed(text string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.term == nil || !t.term.Mode(vt.ModeBracketedPaste) {
+		return false
+	}
+	t.Send(vt.EncodePaste(text, true))
+	return true
+}
+
 // PasteData pastes data, as the paste keys paste the clipboard. A program
 // that reads the clipboard itself (mode 5522, the Kitty clipboard
 // protocol, as programs that take images do) is offered d's formats as

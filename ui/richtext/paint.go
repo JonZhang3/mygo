@@ -22,9 +22,12 @@ func (v *view) paint(p *ui.Painter, r ui.Rect) {
 		v.clipped = false
 	}
 	v.layout(w, h)
+	if v.opts.OnHeight != nil {
+		v.opts.OnHeight(float32(v.hs.top(len(v.paras))) + 2*v.padY)
+	}
 	ox, oy := r.X+v.padX, r.Y+v.padY
 	look := &v.look
-	if v.shown.Len() == 0 && v.compose == "" && v.opts.Placeholder != "" {
+	if v.shown.Len() == 0 && !v.para(0).style.CodeBlock && v.compose == "" && v.opts.Placeholder != "" {
 		// where the text would start: past a list's marker, a task's box or a quote's bar, not under them
 		px, py := v.origin(0)
 		pl := ui.ShapeRichTextWith([]ui.Span{{Text: v.opts.Placeholder}}, v.paraFont(v.para(0).style), ui.TextShape{Width: max(w-px, 1)})
@@ -296,6 +299,12 @@ func (v *view) paintAttachments(p *ui.Painter, i int, pv *paraView, x, y float32
 		}
 		at := v.shown.AttributesAt(v.global(i, l)).Attachment
 		r := ui.Rect{X: x + o.Rect.X, Y: y + o.Rect.Y, W: o.Rect.W, H: o.Rect.H}
+		if at != nil && v.opts.AttachmentStyle != nil {
+			if _, _, draw := v.opts.AttachmentStyle(at.Data); draw != nil {
+				draw(p, r)
+				continue
+			}
+		}
 		switch {
 		case at == nil:
 		case at.Draw != nil:

@@ -37,6 +37,15 @@ func (f *FindBar) WholeWord() *bool     { return &f.ed.find.wholeWord }
 func (f *FindBar) Regexp() *bool        { return &f.ed.find.regex }
 func (f *FindBar) InSelection() *bool   { return &f.ed.find.inSelection }
 
+// PreserveCase controls whether replacement text follows the matched casing.
+func (f *FindBar) PreserveCase() *bool { return &f.ed.find.preserveCase }
+
+// MatchLimitReached reports a bounded result set. A partial set cannot replace all.
+func (f *FindBar) MatchLimitReached() bool {
+	count, _ := f.Matches()
+	return count >= maxMatches
+}
+
 // Replacing reports whether the bar replaces too, as Cmd+Alt+F opens it,
 // and SetReplacing shows or hides replacing, which CanReplace reports a
 // read-only editor never does.
@@ -73,8 +82,12 @@ func (f *FindBar) SelectAll() { f.ed.find.selectAll(f.ed) }
 // Replace replaces the match selected and selects the next; ReplaceAll
 // replaces every match, as one step of undo. A regular expression's
 // replacement expands $1 and ${name}.
-func (f *FindBar) Replace()    { f.ed.find.replaceOne(f.ed) }
-func (f *FindBar) ReplaceAll() { f.ed.find.replaceAll(f.ed) }
+func (f *FindBar) Replace() { f.ed.find.replaceOne(f.ed) }
+func (f *FindBar) ReplaceAll() {
+	if !f.MatchLimitReached() {
+		f.ed.find.replaceAll(f.ed)
+	}
+}
 
 // Close closes the bar, and gives the keyboard back to the text.
 func (f *FindBar) Close() {
@@ -110,8 +123,12 @@ func (f *FindBar) QueryInput(in ui.Element) ui.Element {
 // the match selected, Cmd+Enter all of them, and Escape closes the bar.
 // It returns in.
 func (f *FindBar) ReplacementInput(in ui.Element) ui.Element {
+	mods := ui.Modifiers(ui.Ctrl | ui.Alt)
+	if isMac() {
+		mods = ui.Cmd
+	}
 	switch {
-	case in.Submitted() && f.c.Modifiers()&ui.Cmd != 0:
+	case in.Shortcut(mods, ui.KeyEnter):
 		f.ReplaceAll()
 	case in.Submitted():
 		f.Replace()

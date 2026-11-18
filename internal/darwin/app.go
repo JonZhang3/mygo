@@ -178,8 +178,19 @@ func (b *Backend) Init(h platform.AppHandler, opts platform.AppOptions) error {
 
 var dispatchCallback = purego.NewCallback(func(info uintptr) {
 	withPool(func() {
-		drainMainQueue()
-		theBackend.h.Dispatch()
+		// Go updates can enqueue native frame work after the native queue was
+		// drained. Finish both queues in this run-loop turn instead of waiting for
+		// another input event to wake a frame posted by that same dispatch.
+		for {
+			drainMainQueue()
+			theBackend.h.Dispatch()
+			mainQueueMu.Lock()
+			pending := len(mainQueue) > 0
+			mainQueueMu.Unlock()
+			if !pending {
+				return
+			}
+		}
 	})
 })
 
@@ -206,6 +217,12 @@ func (b *Backend) Signal() {
 	if b.source != 0 {
 		purego.SyscallN(cfRunLoopSourceSignalFn, b.source)
 		purego.SyscallN(cfRunLoopWakeUpFn, b.mainLoop)
+		// AppKit may keep waiting for an NSEvent after a background source is
+		// signaled. Wake that wait too, so committed Runtime state does not
+		// require a later user key or pointer event to become visible.
+		if !b.IsMainThread() {
+			b.Wake()
+		}
 	}
 }
 

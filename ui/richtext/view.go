@@ -2,6 +2,7 @@ package richtext
 
 import (
 	"slices"
+	"strings"
 	"time"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -16,6 +17,22 @@ import (
 
 // EditorOptions configure an Editor.
 type EditorOptions struct {
+	// OnClipboard handles clipboard commands for application-defined objects.
+	OnClipboard func(command string) bool
+	// OnEdit is called after a committed edit and selection have been published.
+	OnEdit func()
+	// AttachmentStyle resolves the current presentation of application objects.
+	AttachmentStyle func(data any) (width, height float32, draw func(*ui.Painter, ui.Rect))
+	// OnHeight receives the document's measured height after layout.
+	OnHeight func(float32)
+	// StyleCode supplies visual spans for a code line without editing its text.
+	StyleCode func(language, line string) []ui.Span
+	// StyleRevision invalidates cached shapes when application style changes.
+	StyleRevision string
+	// InstantCodeFence creates a code block on the third opening backtick.
+	InstantCodeFence bool
+	// InlineCodePadding is the room around an inline code span, in ems.
+	InlineCodePadding [2]float32
 	// Label names the editor to assistive technology; "Rich text" when
 	// empty.
 	Label string
@@ -254,8 +271,9 @@ type look struct {
 	border ui.Color // around an attachment not loaded yet
 	// width is the room of the paragraph being laid out, which
 	// attachments shrink to.
-	width    float32
-	tagStyle func(tag string, s *ui.Span)
+	width             float32
+	tagStyle          func(tag string, s *ui.Span)
+	inlineCodePadding [2]float32
 }
 
 func build(c *ui.Context, doc *Document, options []EditorOptions, styled bool) ui.Element {
@@ -346,11 +364,12 @@ func (v *view) setLook(t *ui.Theme, styled bool) {
 	def := defaultTheme(t)
 	th := resolve(v.opts.Theme, &def)
 	v.look = look{
-		Theme:    th,
-		size:     f.Size,
-		indent:   f.Size * th.Indent,
-		border:   t.Border,
-		tagStyle: v.opts.TagStyle,
+		Theme:             th,
+		size:              f.Size,
+		indent:            f.Size * th.Indent,
+		border:            t.Border,
+		tagStyle:          v.opts.TagStyle,
+		inlineCodePadding: v.opts.InlineCodePadding,
 	}
 	if styled {
 		v.padX, v.padY = th.Padding[0], th.Padding[1]
@@ -597,15 +616,17 @@ func (v *view) paraFont(st ParagraphStyle) ui.Font {
 
 // lookKey is what of the look the layouts of paragraphs are made of.
 type lookKey struct {
-	base  ui.Font
-	theme Theme
-	tags  bool
-	spans bool
-	ver   int
+	base              ui.Font
+	theme             Theme
+	tags              bool
+	spans             bool
+	ver               int
+	styleRevision     string
+	inlineCodePadding [2]float32
 }
 
 func (v *view) lookKey() lookKey {
-	return lookKey{base: v.base, theme: v.look.Theme, tags: v.look.tagStyle != nil, spans: v.opts.Spans != nil, ver: v.opts.SpansVersion}
+	return lookKey{base: v.base, theme: v.look.Theme, tags: v.look.tagStyle != nil, spans: v.opts.Spans != nil, ver: v.opts.SpansVersion, styleRevision: v.opts.StyleRevision, inlineCodePadding: v.look.inlineCodePadding}
 }
 
 // heading returns the style of headings of level, from 1.
@@ -701,6 +722,12 @@ func (look *look) span(text string, a Attributes, st ParagraphStyle) ui.Span {
 		}
 		// A pill hugging the code, as Markdown views show it.
 		s.Radius = max(3, s.Size/4)
+		s.PaddingX = s.Size * look.inlineCodePadding[0]
+		s.PaddingY = s.Size * look.inlineCodePadding[1]
+		if s.PaddingX > 0 {
+			s.Radius = s.PaddingX
+			s.Weight = max(s.Weight, 500)
+		}
 	}
 	if a.Link != "" {
 		if s.Color.A == 0 {
@@ -788,7 +815,15 @@ func (v *view) paraLayout(p int) *paraView {
 			end += size
 		}
 		if end > off {
-			spans = append(spans, v.look.span(line[off:end], a, para.style))
+			if a.Attachment != nil && v.opts.AttachmentStyle != nil {
+				w, h, _ := v.opts.AttachmentStyle(a.Attachment.Data)
+				if w > 0 && h > 0 {
+					at := *a.Attachment
+					at.Width, at.Height = w, h
+					a.Attachment = &at
+				}
+			}
+			spans = append(spans, v.look.span(strings.ReplaceAll(line[off:end], "\u2028", "\n"), a, para.style))
 		}
 		off = end
 	}
@@ -809,6 +844,11 @@ func (v *view) paraLayout(p int) *paraView {
 	}
 	if compose != "" {
 		spans = append(spans, v.look.span(compose, typing, para.style))
+	}
+	if para.style.CodeBlock && composed == "" && v.opts.StyleCode != nil {
+		if highlighted := v.opts.StyleCode(para.style.CodeLanguage, line); len(highlighted) != 0 {
+			spans = highlighted
+		}
 	}
 	if v.opts.Spans != nil {
 		spans = v.opts.Spans(p, para.style, spans)
@@ -909,6 +949,25 @@ func (v *view) caretAt(i, extra int, affinity ui.TextAffinity) (x float32, y flo
 	pv := v.paraLayout(p)
 	l := min(v.local(p, i)+extra, len(pv.units)-1)
 	r := pv.layout.CaretAt(ui.TextCaretPosition{Index: pv.units[l], Affinity: affinity})
+	if extra == 0 && l > 0 {
+		// Core Text can return the replacement glyph's leading position
+		// for a caret after a custom object and its trailing space.
+		edge := l - 1
+		for edge > 0 && v.runeAt(v.global(p, edge)) == ' ' {
+			edge--
+		}
+		for _, object := range pv.layout.Objects() {
+			if object.Index == pv.units[edge] && v.opts.AttachmentStyle != nil {
+				// A trailing space can be on the next wrapped line. Its
+				// caret already has the correct x on that line.
+				before := pv.layout.CaretAt(ui.TextCaretPosition{Index: pv.units[edge], Affinity: ui.TextDownstream})
+				if l == len(pv.units)-1 || before.Y == r.Y {
+					r.X = max(r.X, object.Rect.X+object.Rect.W)
+				}
+				break
+			}
+		}
+	}
 	ox, oy := v.origin(p)
 	return ox + r.X, oy + float64(r.Y), r.H
 }
@@ -1334,7 +1393,7 @@ func (v *view) access(n *platform.AccessNode) {
 	if v.opts.ReadOnly {
 		n.States |= platform.AccessReadOnly
 	}
-	if v.shown.Len() == 0 {
+	if v.shown.Len() == 0 && !v.para(0).style.CodeBlock {
 		n.Placeholder = v.opts.Placeholder
 	}
 	n.TextRuns = v.accessRuns(n.TextRuns[:0])

@@ -18,9 +18,11 @@ type Font struct {
 	// Size is the size in DIPs: 13 when zero.
 	Size float32
 	// Weight is how heavy text is, from 100 (thin) to 900 (black), of the
-	// weights the family has: 400 when zero. Bold text is 300 heavier, and
-	// at least 700.
+	// weights the family has: 400 when zero.
 	Weight int
+	// BoldWeight sets the weight of bold text. When zero, bold text is 300
+	// heavier than Weight, with a minimum of 700.
+	BoldWeight int
 	// Features turn OpenType features of the font on and off by tag, as
 	// Ghostty's font-feature: "ss01" or "+ss01" turns one on, "calt=0" or
 	// "-calt" off, and "cv05=2" picks an alternate. Coding fonts make
@@ -50,6 +52,7 @@ type fontKey struct {
 	family     string
 	size       float32
 	weight     int
+	boldWeight int
 	features   string
 	cellWidth  float32
 	lineHeight float32
@@ -58,7 +61,7 @@ type fontKey struct {
 }
 
 func (f *Font) key(scale float32) fontKey {
-	k := fontKey{family: f.Family, size: f.Size, weight: f.Weight, features: featureList(f.Features), cellWidth: f.CellWidth, lineHeight: f.LineHeight, thicken: f.Thicken, scale: scale}
+	k := fontKey{family: f.Family, size: f.Size, weight: f.Weight, boldWeight: f.BoldWeight, features: featureList(f.Features), cellWidth: f.CellWidth, lineHeight: f.LineHeight, thicken: f.Thicken, scale: scale}
 	if runtime.GOOS == "darwin" {
 		k.features = unkerned(k.features)
 	}
@@ -72,6 +75,11 @@ func (f *Font) key(scale float32) fontKey {
 		k.weight = 400
 	}
 	k.weight = min(max(k.weight, 100), 900)
+	if k.boldWeight <= 0 {
+		k.boldWeight = min(max(k.weight+300, 700), 900)
+	} else {
+		k.boldWeight = min(max(k.boldWeight, 100), 900)
+	}
 	if !(k.cellWidth > 0) || math.IsInf(float64(k.cellWidth), 0) {
 		k.cellWidth = 1
 	}
@@ -85,7 +93,7 @@ func (f *Font) key(scale float32) fontKey {
 func (k fontKey) variant(i int) ui.Font {
 	w := k.weight
 	if i&1 != 0 {
-		w = min(max(w+300, 700), 900)
+		w = k.boldWeight
 	}
 	return ui.Font{Family: k.family, Size: k.size, Weight: w, Italic: i&2 != 0, Features: k.features, Thicken: k.thicken}
 }

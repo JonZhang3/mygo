@@ -689,6 +689,9 @@ func (v *view) draw(p *ui.Painter, r ui.Rect) {
 		v.extendPadding(p, r, ox, oy, cw, ch)
 	}
 	selection := v.theme.Selection
+	if !v.focused && v.theme.SelectionInactive.A != 0 {
+		selection = v.theme.SelectionInactive
+	}
 	if selection.A == 0 {
 		selection = color(v.colors.Foreground).Alpha(0.3)
 	}

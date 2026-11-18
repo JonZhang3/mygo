@@ -15,10 +15,60 @@ import (
 // by tabs, the header's bold. Math, which the editor does not show, stays
 // as written: \[ is an escaped bracket, as everywhere but in math.
 func ParseMarkdown(s string) Text {
+	return parseMarkdown(s, false)
+}
+
+// ParseComposerMarkdown retains line breaks inside a paragraph.
+func ParseComposerMarkdown(s string) Text {
+	return parseMarkdown(s, true)
+}
+
+func parseMarkdown(s string, composer bool) Text {
 	d := parser.New(parser.GFM | parser.ExtFootnotes)
 	d.Set(s)
-	m := mdReader{d: d}
-	m.blocks(0, ParagraphStyle{}, -1)
+	m := mdReader{d: d, composer: composer}
+	if composer {
+		end := 0
+		for k := range d.Children(0) {
+			b := d.Block(k)
+			gap := strings.Count(s[end:b.Start], "\n")
+			if end != 0 && s[end-1] != '\n' {
+				gap--
+			}
+			for range max(0, gap) {
+				m.paras = append(m.paras, Paragraph{})
+			}
+			switch b.Kind {
+			case parser.Paragraph, parser.Heading, parser.CodeBlock, parser.Quote, parser.List:
+				m.block(k, ParagraphStyle{}, -1)
+				if b.Kind == parser.Paragraph && len(m.paras) != 0 {
+					source := strings.TrimSuffix(s[b.Start:b.End], "\n")
+					trailing := source[len(strings.TrimRight(source, " \t")):]
+					if trailing != "" {
+						last := &m.paras[len(m.paras)-1]
+						last.Runs = addMDRun(last.Runs, Run{Text: trailing})
+					}
+				}
+			default:
+				m.paras = append(m.paras, Paragraph{Runs: []Run{{Text: strings.TrimSuffix(s[b.Start:b.End], "\n")}}})
+			}
+			end = b.End
+		}
+		tail := s[end:]
+		if end != 0 && s[end-1] == '\n' {
+			tail = "\n" + tail
+		}
+		if tail != "" {
+			if end == 0 {
+				return NewText(tail)
+			}
+			for range strings.Count(tail, "\n") {
+				m.paras = append(m.paras, Paragraph{})
+			}
+		}
+	} else {
+		m.blocks(0, ParagraphStyle{}, -1)
+	}
 	if len(m.paras) == 0 {
 		return Text{}
 	}
@@ -28,8 +78,9 @@ func ParseMarkdown(s string) Text {
 // mdReader reads the blocks and inlines of a Markdown document into
 // paragraphs.
 type mdReader struct {
-	d     *parser.Document
-	paras []Paragraph
+	d        *parser.Document
+	paras    []Paragraph
+	composer bool
 	// html counts the inline HTML tags open, by the attribute they turn
 	// on: <u>, <s>, <b> and <i> and their synonyms.
 	html [4]int
@@ -53,6 +104,7 @@ func (m *mdReader) block(i int, st ParagraphStyle, depth int) {
 		m.inlinePara(st, m.d.Inlines(i), Attributes{})
 	case parser.CodeBlock:
 		st.CodeBlock, st.Heading = true, 0
+		st.CodeLanguage = b.Language()
 		n := m.d.LineCount(i)
 		for k := range n {
 			line, _ := m.d.Line(i, k)
@@ -204,9 +256,17 @@ func (m *mdReader) inlines(out *[]Run, in []parser.Inline, from, to int, a Attri
 		case parser.Text:
 			add(n.Text, a)
 		case parser.SoftBreak:
-			add(" ", a)
+			if m.composer {
+				add("\u2028", a)
+			} else {
+				add(" ", a)
+			}
 		case parser.LineBreak:
-			add("\n", a)
+			if m.composer {
+				add("\u2028", a)
+			} else {
+				add("\n", a)
+			}
 		case parser.Code:
 			x.Code = true
 			add(n.Text, x)

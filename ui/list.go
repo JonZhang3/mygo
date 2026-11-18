@@ -239,8 +239,9 @@ type ListState struct {
 	// following tells that the list showed its end as the last layout left
 	// it, or was scrolled to it since: it follows the end while FollowEnd
 	// is set (follows), which each layout reads as it is then.
-	following bool
-	started   bool
+	following    bool
+	followPaused bool
+	started      bool
 	// followLag is how far below its place the end shows as it glides
 	// there (FollowAnimation). follow is the list as the last layout of it
 	// left it, followWas as the frame before left it, and followBase the
@@ -346,10 +347,10 @@ type ListState struct {
 // (with row, when hint is set, the row to place from there). user tells
 // that the user asked, by the scroll bar or the keys (EndReached).
 type listRequest struct {
-	set, end, near, offset, hint, user bool
-	row                                int
-	align                              Align
-	y                                  float64
+	set, end, near, offset, hint, anchored, rowTop, user bool
+	row                                                  int
+	align                                                Align
+	y                                                    float64
 }
 
 type listRowID struct {
@@ -379,8 +380,47 @@ type followMark struct {
 // the list scrolls as the frame is laid out, to where the row is once it
 // is measured.
 func (s *ListState) ScrollTo(row int, align Align) {
+	s.followPaused = false
 	s.req = listRequest{set: true, row: row, align: align}
 	s.scrolled = true
+}
+
+// ScrollAnchor returns the top visible row and how many DIPs are hidden
+// above the viewport, for restoring a view after a process restart.
+func (s *ListState) ScrollAnchor() (row int, inset float64, ready bool) {
+	s.read = true
+	return s.anchor, s.inset, s.laidOut && s.first <= s.last
+}
+
+// RowsHeight reports the measured or estimated height of the range [first, end).
+func (s *ListState) RowsHeight(first, end int) float64 {
+	s.read = true
+	return max(0, s.heights.top(end, s.gap)-s.heights.top(first, s.gap))
+}
+
+// RestoreScrollAnchor positions a row at the recorded inset once measured.
+func (s *ListState) RestoreScrollAnchor(row int, inset float64) {
+	s.req = listRequest{set: true, row: row, anchored: true, y: max(0, inset)}
+	s.scrolled = true
+}
+
+// PreserveRowTop keeps the row at top DIPs from the viewport top during
+// this layout, within the list's scroll range. It pauses FollowEnd until
+// the list is explicitly scrolled to its end again.
+func (s *ListState) PreserveRowTop(row int, top float64) {
+	s.followPaused = true
+	s.following = false
+	s.req = listRequest{set: true, row: row, rowTop: true, y: top}
+	s.scrolled = true
+}
+
+// ResumeEndFollowing lets input toward the end rearm FollowEnd when the
+// list is already there and the input cannot change its scroll offset.
+func (s *ListState) ResumeEndFollowing() {
+	if s.atEnd && s.FollowEnd && s.followPaused {
+		s.followPaused = false
+		s.following = true
+	}
 }
 
 // ScrollIntoView scrolls the list as little as shows row whole, as
@@ -393,6 +433,7 @@ func (s *ListState) ScrollIntoView(row int) {
 // ScrollToEnd scrolls the list to its end, where FollowEnd follows it
 // again.
 func (s *ListState) ScrollToEnd() {
+	s.followPaused = false
 	s.req = listRequest{set: true, end: true}
 	s.scrolled = true
 }
@@ -718,6 +759,7 @@ func (s *ListState) sync(e *node, n int) {
 		y := max(0, min(st.scrollY, top))
 		switch d := y - s.wroteY; {
 		case top > 0 && y >= top-0.5:
+			s.followPaused = false
 			s.req = listRequest{set: true, end: true, user: true}
 			s.moveJump = true
 		case d >= -2*float64(st.h) && d <= 2*float64(st.h):
@@ -734,7 +776,7 @@ func (s *ListState) sync(e *node, n int) {
 
 // follows reports whether the list follows its end: it shows it, and
 // FollowEnd, as the app has it now, says to.
-func (s *ListState) follows() bool { return s.FollowEnd && s.following }
+func (s *ListState) follows() bool { return s.FollowEnd && s.following && !s.followPaused }
 
 // anchorAt returns the row at the top of the view scrolled to y, and where
 // its top goes in the list's box, as the heights known put them.
@@ -1600,6 +1642,10 @@ func (e *node) layoutList(w, h float32) {
 			}
 		}
 		switch {
+		case req.rowTop:
+			ya = req.y
+		case req.anchored:
+			ya = start - min(req.y, max(0, size-1))
 		case req.near:
 			// Where the place puts it now.
 			ya = padTop + hs.top(a, gap) - (hs.top(s.anchor, gap) + s.inset)
@@ -1875,13 +1921,13 @@ func (e *node) relayoutList(ch *node, y float64) {
 // for a view that read where it was.
 func (s *ListState) remember(e *node, first, last int, atEnd bool, scroll float64) {
 	f, n := e.list, e.list.n
-	if s.read && (first != s.first || last != s.last || atEnd != s.atEnd) {
+	if s.read && (first != s.first || last != s.last || atEnd != s.atEnd || scroll != s.wroteY) {
 		e.c.rt.animating = true
 	}
 	s.laidOut, s.wroteY, s.req, s.read = true, scroll, listRequest{}, false
 	s.first, s.last, s.atEnd = first, last, atEnd
 	s.reachEnd(e.c.rt, first, last, n)
-	s.following = atEnd
+	s.following = atEnd && !s.followPaused
 	s.anchor, s.anchorKey = max(0, first), nil
 	if n == 0 {
 		s.inset = 0

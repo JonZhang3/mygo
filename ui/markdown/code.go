@@ -166,7 +166,11 @@ func (b *CodeBlockView) Body(c *ui.Context) ui.Element {
 	}
 	// Code reads left to right in a right-to-left interface too, as in
 	// editors.
-	outer.Direction(ui.LeftToRight).AlignSelf(ui.Stretch).Font(th.CodeFont).FontSize(th.em(th.CodeSize)).LineHeight(th.CodeLineHeight)
+	size := th.CodeBlockSize
+	if size <= 0 {
+		size = th.CodeSize
+	}
+	outer.Direction(ui.LeftToRight).AlignSelf(ui.Stretch).Font(th.CodeFont).FontSize(th.em(size)).LineHeight(th.CodeLineHeight)
 	return outer.Children(func() {
 		col := ui.Column(c).Padding(th.em(0.25), pad, pad, pad)
 		if !st.o.WrapCode {

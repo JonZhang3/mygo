@@ -36,6 +36,9 @@ type Update struct {
 // Enabled reports whether the app can update itself: not in browsers.
 func (u *UpdaterModule) Enabled() bool { return false }
 
+// Configured reports false for browser builds.
+func (u *UpdaterModule) Configured() bool { return false }
+
 // Check returns ErrUpdatesDisabled.
 func (u *UpdaterModule) Check(ctx context.Context) (*Update, error) {
 	return nil, ErrUpdatesDisabled
@@ -63,6 +66,26 @@ func (u *UpdaterModule) Prereleases() bool { return false }
 func (up *Update) Install(ctx context.Context, progress func(downloaded, total int64)) error {
 	return ErrUpdatesDisabled
 }
+
+// PreparedUpdate is unavailable in browsers, which load the newest app page.
+type PreparedUpdate struct{}
+
+// UpdatePreparationOptions reports native update preparation progress.
+type UpdatePreparationOptions struct {
+	Progress  func(downloaded, total int64)
+	Preparing func()
+}
+
+// Prepare returns ErrUpdatesDisabled.
+func (up *Update) Prepare(ctx context.Context, options UpdatePreparationOptions) (*PreparedUpdate, error) {
+	return nil, ErrUpdatesDisabled
+}
+
+// Install returns ErrUpdatesDisabled.
+func (prepared *PreparedUpdate) Install(ctx context.Context) error { return ErrUpdatesDisabled }
+
+// Close has no temporary files to release in browsers.
+func (prepared *PreparedUpdate) Close() error { return nil }
 
 func relaunchNow() {}
 

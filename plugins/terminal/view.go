@@ -34,6 +34,13 @@ import (
 // (Option+click on macOS) on the input of a shell's prompt moves the
 // shell's cursor there, when the shell marks its prompt (OSC 133).
 func View(c *ui.Context, t *Terminal) ui.Element {
+	return ViewWithContextMenu(c, t, nil)
+}
+
+// ViewWithContextMenu builds the terminal with an application-drawn menu.
+// The menu attaches to the terminal itself, so handled mouse events still
+// belong to the terminal before the UI offers a context menu.
+func ViewWithContextMenu(c *ui.Context, t *Terminal, menu func(ui.Element, ContextMenu)) ui.Element {
 	v := t.viewOf(c)
 	// A terminal's grid is left to right in a right-to-left interface too.
 	e := ui.Box(c).Direction(ui.LeftToRight).Focusable().FocusRing(false).Clip().Label("Terminal")
@@ -46,7 +53,11 @@ func View(c *ui.Context, t *Terminal) ui.Element {
 	e.HandleInput(v.input)
 	e.TextCaret(v.caret())
 	e.Draw(v.paint)
-	e.ContextMenu(v.menu)
+	if menu == nil {
+		e.ContextMenu(v.menu)
+	} else {
+		menu(e, ContextMenu{view: v})
+	}
 	return e
 }
 
@@ -237,8 +248,13 @@ type view struct {
 	// opening is the link a click asked to open, opened once t.mu is
 	// released; openingPath tells it is a file path, which the system
 	// does not open.
-	opening     string
-	openingPath bool
+	opening        string
+	openingPath    bool
+	linkClick      string
+	linkClickStart [2]float32
+	linkClickMods  ui.Modifiers
+	linkClickOwns  bool
+	activatedLink  string
 	// copying is the selection a release ended with Options.CopyOnSelect,
 	// and rightClick what a secondary click does, done once t.mu is
 	// released, as opening is.
@@ -565,8 +581,19 @@ func (v *view) caret() ui.Rect {
 	return ui.Rect{X: x, Y: y, W: cw, H: ch}
 }
 
-// menu is the terminal's context menu.
-func (v *view) menu(m *ui.Menu) {
+// ContextMenu exposes the mounted terminal's commands to its context menu.
+type ContextMenu struct{ view *view }
+
+// ContextMenuItem describes a terminal command and its current availability.
+type ContextMenuItem struct {
+	Action      Action
+	Label, Hint string
+	Disabled    bool
+}
+
+// Items returns the standard commands in menu order.
+func (m ContextMenu) Items() []ContextMenuItem {
+	v := m.view
 	t := v.t
 	t.mu.Lock()
 	text, selected, alt := "", false, false
@@ -576,31 +603,51 @@ func (v *view) menu(m *ui.Menu) {
 	}
 	t.mu.Unlock()
 	tx := l10n.In(v.lang)
-	if v.menuItem(m, tx.Copy(), ActionCopy).Disabled(!selected || text == "").Chosen() {
-		v.services.WriteClipboard(text)
-		v.copied(text, CopyUser)
+	items := []ContextMenuItem{
+		{Action: ActionCopy, Label: tx.Copy(), Disabled: !selected || text == ""},
+		{Action: ActionPaste, Label: tx.Paste()},
+		{Action: ActionSelectAll, Label: tx.SelectAll()},
+		{Action: ActionClearScreen, Label: tx.ClearTerminal(), Disabled: alt},
 	}
-	if v.menuItem(m, tx.Paste(), ActionPaste).Chosen() {
-		v.paste()
+	for i := range items {
+		if b, ok := t.shortcut(items[i].Action); ok {
+			items[i].Hint = ui.ShortcutHint(b.Mods, b.Key)
+		}
 	}
-	if v.menuItem(m, tx.SelectAll(), ActionSelectAll).Chosen() {
-		v.selectAll()
-	}
-	m.Separator()
-	// Clear clears as ⌘K does, as Ghostty's: clearing the scrollback
-	// alone would change nothing on the screen.
-	if v.menuItem(m, tx.ClearTerminal(), ActionClearScreen).Disabled(alt).Chosen() {
-		v.clearScreen()
-	}
+	return items
 }
 
-// menuItem adds an item of the menu, showing the key bound to its action.
-func (v *view) menuItem(m *ui.Menu, label string, a Action) *ui.MenuItem {
-	it := m.Item(label)
-	if b, ok := v.t.shortcut(a); ok {
-		it.Shortcut(b.Mods, b.Key)
+// Link returns the link at the last pointer position in the terminal.
+func (m ContextMenu) Link() string {
+	v := m.view
+	v.t.mu.Lock()
+	defer v.t.mu.Unlock()
+	if v.t.term == nil {
+		return ""
 	}
-	return it
+	link, _, _ := v.linkUnder(ui.Cmd, v.pointer[0], v.pointer[1])
+	return link
+}
+
+// Run executes a menu command using the same action as the terminal keymap.
+func (m ContextMenu) Run(action Action) {
+	m.view.perform(action, false)
+}
+
+func (v *view) menu(m *ui.Menu) {
+	commands := ContextMenu{view: v}
+	for _, command := range commands.Items() {
+		if command.Action == ActionClearScreen {
+			m.Separator()
+		}
+		item := m.Item(command.Label).Disabled(command.Disabled)
+		if b, ok := v.t.shortcut(command.Action); ok {
+			item.Shortcut(b.Mods, b.Key)
+		}
+		if item.Chosen() {
+			commands.Run(command.Action)
+		}
+	}
 }
 
 // input handles the input of the view as it comes.
@@ -635,6 +682,11 @@ func (v *view) input(ev ui.InputEvent) bool {
 		return true
 	case ui.InputPointerDown, ui.InputPointerUp, ui.InputPointerMove:
 		took := v.pointerEvent(ev)
+		if link := v.activatedLink; link != "" {
+			v.activatedLink = ""
+			v.t.opts.OnLinkClick(link, ev)
+			took = true
+		}
 		if link := v.opening; link != "" {
 			v.opening = ""
 			if open := v.t.opts.OpenLink; (open == nil || !open(link)) && !v.openingPath {
@@ -685,6 +737,17 @@ func (v *view) keyDown(ev ui.InputEvent) bool {
 	}
 	mac := goos == "darwin"
 	mods, key := ev.Mods, ev.Key
+	if t.opts.LegacyShiftEnter && key == ui.KeyEnter && mods == ui.Shift && v.preedit == "" {
+		t.mu.Lock()
+		legacy := t.term != nil && t.term.KittyKeyboardFlags() == 0
+		t.mu.Unlock()
+		if legacy {
+			k, _ := vtKey(key)
+			v.pending = &pendingKey{key: k, taken: true}
+			t.Send([]byte{27, 13})
+			return true
+		}
+	}
 	if b, ok := t.binding(mods, key); ok {
 		if v.perform(b.Action, b.Performable) || !b.Performable {
 			// Its text and release are the binding's too.
@@ -1095,7 +1158,13 @@ func (v *view) pointerEvent(ev ui.InputEvent) bool {
 		return true
 	}
 	if v.scrollbarEvent(ev) {
+		v.linkClick = ""
 		return true
+	}
+	if t.opts.OnLinkClick != nil {
+		if v.trackLinkClick(ev) {
+			return true
+		}
 	}
 	// Command over a link: a hand, and a click opens it, before a
 	// program that takes the mouse sees it.
@@ -1104,7 +1173,7 @@ func (v *view) pointerEvent(ev ui.InputEvent) bool {
 		v.hover, v.hoverLink, v.hoverPath = hover, link, path
 		v.services.Invalidate()
 	}
-	if link != "" && ev.Kind == ui.InputPointerDown && ev.Button == 0 {
+	if t.opts.OnLinkClick == nil && link != "" && ev.Kind == ui.InputPointerDown && ev.Button == 0 {
 		v.opening, v.openingPath, v.linkPress = link, path, true
 		return true
 	}
@@ -1226,8 +1295,7 @@ func (v *view) wraps(r int) bool {
 	return wrap
 }
 
-// HoveredLink returns the link Command (Control elsewhere) is held over
-// in the view, which a click opens and which shows underlined, as
+// HoveredLink returns the underlined link in the view, as
 // Options.OpenLink takes it; whether it is a file path; and the rectangle
 // of its cells in DIPs, relative to the view: around the rows it wraps
 // over, for one that does. It returns "" over no link,
@@ -1254,14 +1322,65 @@ func (t *Terminal) HoveredLink() (link string, path bool, at ui.Rect) {
 	}
 }
 
-// linkUnder is the link a click with mods at (x, y) opens, whether it is
-// a file path, and its cells: none without Command, or while the primary
-// button selects or the program has a press; t.mu is held.
+// linkUnder returns the hover target. Application-owned links can underline
+// without modifiers even when a TUI owns unmodified clicks; t.mu is held.
 func (v *view) linkUnder(mods ui.Modifiers, x, y float32) (link string, path bool, at linkSpan) {
-	if mods&ui.Cmd == 0 || v.selecting || v.reporting || v.cellW == 0 || v.overScrollbar(x, y) {
+	if v.selecting || v.reporting || v.cellW == 0 || v.overScrollbar(x, y) {
 		return "", false, linkSpan{}
 	}
-	return v.linkAt(v.cellAt(x, y))
+	if v.t.opts.OnLinkClick == nil && mods&ui.Cmd == 0 {
+		return "", false, linkSpan{}
+	}
+	link, path, at = v.linkAt(v.cellAt(x, y))
+	if link != "" && v.t.opts.LinkAvailable != nil && !v.t.opts.LinkAvailable(link) {
+		return "", false, linkSpan{}
+	}
+	return
+}
+
+// A host-owned click requires an unmodified selection gesture or an exact
+// link shortcut; moving beyond the click threshold leaves the gesture alone.
+func (v *view) trackLinkClick(ev ui.InputEvent) bool {
+	dx, dy := ev.X-v.linkClickStart[0], ev.Y-v.linkClickStart[1]
+	if ev.Canceled || dx*dx+dy*dy > 25 {
+		v.linkClick = ""
+	}
+	switch ev.Kind {
+	case ui.InputPointerDown:
+		v.linkClick, v.linkClickOwns = "", false
+		if ev.Button != 0 || v.reporting || v.selecting {
+			return false
+		}
+		if ev.Mods != 0 {
+			accept := ev.Mods == ui.Cmd || ev.Mods == ui.Cmd|ui.Shift
+			if match := v.t.opts.LinkClickModifiers; match != nil {
+				accept = match(ev.Mods)
+			}
+			if !accept {
+				return false
+			}
+		}
+		v.linkClick, _, _ = v.linkAt(v.cellAt(ev.X, ev.Y))
+		v.linkClickStart, v.linkClickMods = [2]float32{ev.X, ev.Y}, ev.Mods
+		if v.t.term.MouseTracking() && v.linkClick != "" {
+			v.linkClickOwns = v.hover.on() && v.hoverLink == v.linkClick ||
+				v.t.opts.LinkAvailable == nil || v.t.opts.LinkAvailable(v.linkClick)
+			if !v.linkClickOwns {
+				v.linkClick = ""
+			}
+		}
+	case ui.InputPointerUp:
+		if v.linkClick != "" && ev.Button == 0 && ev.Mods == v.linkClickMods {
+			if link, _, _ := v.linkAt(v.cellAt(ev.X, ev.Y)); link == v.linkClick {
+				v.activatedLink = link
+			}
+		}
+		v.linkClick = ""
+		owned := v.linkClickOwns
+		v.linkClickOwns = false
+		return owned
+	}
+	return v.linkClickOwns
 }
 
 // scrollbarStrip is how wide the strip at the right edge is over which the
@@ -1358,31 +1477,37 @@ func (v *view) linkAt(col, row int) (link string, path bool, at linkSpan) {
 		}
 		return url, false, v.spanOf(a, b)
 	}
-	// The text of the rows the cell's row wraps with, each rune at its
-	// cell counted across the viewport.
-	top, bottom := row, row
-	for top > 0 && v.wraps(top-1) {
-		top--
+	text, cols, offset := t.term.LogicalRowText(row)
+	span := func(a, b int) linkSpan {
+		start := max(0, row*v.cols+a-offset)
+		end := min(v.rows*v.cols, row*v.cols+b-offset)
+		if start >= end {
+			return linkSpan{}
+		}
+		return v.spanOf(start, end)
 	}
-	for v.wraps(bottom) {
-		bottom++
+	if url, x0, x1 := urlAt(text, cols, col+offset); url != "" {
+		return url, false, span(x0, x1)
 	}
-	var text []rune
-	var cols []int
-	for r := top; r <= bottom; r++ {
-		rt, rc := t.term.RowText(r)
-		text = append(text, rt...)
-		for _, c := range rc {
-			cols = append(cols, r*v.cols+c)
+	if t.opts.OnLinkClick != nil {
+		if p, x0, x1, listing := listingPathAt(text, cols, col+offset); listing {
+			if p == "" {
+				return "", false, linkSpan{}
+			}
+			return p, true, span(x0, x1)
+		}
+		if p, x0, x1 := matchPathAt(escapedPathPattern, text, cols, col+offset); p != "" {
+			return p, true, span(x0, x1)
 		}
 	}
-	i := row*v.cols + col
-	if url, a, b := urlAt(text, cols, i); url != "" {
-		return url, false, v.spanOf(a, b)
+	if t.opts.OpenLink != nil || t.opts.OnLinkClick != nil {
+		if p, x0, x1 := pathAt(text, cols, col+offset); p != "" {
+			return p, true, span(x0, x1)
+		}
 	}
-	if t.opts.OpenLink != nil {
-		if p, a, b := pathAt(text, cols, i); p != "" {
-			return p, true, v.spanOf(a, b)
+	if t.opts.OnLinkClick != nil {
+		if p, x0, x1 := matchPathAt(barePathPattern, text, cols, col+offset); p != "" {
+			return p, true, span(x0, x1)
 		}
 	}
 	return "", false, linkSpan{}

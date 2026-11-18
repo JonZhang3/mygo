@@ -172,6 +172,10 @@ func (rt *engine) event(ev platform.SurfaceEvent) (taken bool) {
 		rt.focusChanged()
 	case platform.SurfaceBlur:
 		rt.windowFocused = false
+		if d := rt.drag; d != nil && !d.native && d.preview.draw != nil {
+			rt.drag = nil
+			rt.requestFrame()
+		}
 		rt.selection.dragging = false
 		// Keys let go of elsewhere never come back up here.
 		rt.modsChanged(0)
@@ -725,7 +729,7 @@ func (rt *engine) pointerCancel(button int) {
 	switch {
 	case rt.scrollDrag.st != nil:
 		button = 0
-	case rt.pressed != nil:
+	case rt.pressed != nil, rt.drag != nil && !rt.drag.native && rt.drag.preview.draw != nil:
 		button = rt.pressButton
 	}
 	if button < 0 {
@@ -778,7 +782,9 @@ func (rt *engine) pointerUp(button, clicks int, canceled bool) {
 		rt.requestFrame()
 		return
 	}
-	if s := rt.pressed; s != nil && button == rt.pressButton {
+	// A retained preview can outlive the pressed source when it scrolls away.
+	d := rt.drag
+	if s := rt.pressed; button == rt.pressButton && (s != nil || d != nil && !d.native && d.preview.draw != nil) {
 		if d := rt.drag; canceled && d != nil && !d.native {
 			// Given up, as with Escape: dropped nowhere, and not missed. A
 			// native drag's session has the pointer, and ends it.
@@ -787,9 +793,11 @@ func (rt *engine) pointerUp(button, clicks int, canceled bool) {
 		if rt.dragEnd() {
 			// A drag ended, dropping its value: no click.
 			rt.pressed = nil
-			s.pressed = false
-			if canceled {
-				s.canceled = true
+			if s != nil {
+				s.pressed = false
+				if canceled {
+					s.canceled = true
+				}
 			}
 			rt.setHover(rt.hitChain(rt.pointerX, rt.pointerY))
 			return

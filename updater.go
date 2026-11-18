@@ -122,7 +122,7 @@ type Update struct {
 // updates and can write where it is installed. Apps installed by a package
 // manager, such as a .deb in /opt, are updated by it instead.
 func (u *UpdaterModule) Enabled() bool {
-	if packageUpdateFeed == "" || packageUpdateKey == "" || IsDev() {
+	if !u.Configured() {
 		return false
 	}
 	target, err := installTarget()
@@ -137,11 +137,18 @@ func (u *UpdaterModule) Enabled() bool {
 	return true
 }
 
+// Configured reports whether this production build has a feed and verification
+// key. Unlike Enabled, it permits metadata checks for package-manager installs
+// whose application UI offers a manual download instead of replacing files.
+func (u *UpdaterModule) Configured() bool {
+	return packageUpdateFeed != "" && packageUpdateKey != "" && !IsDev()
+}
+
 // Check asks the update feed, or the source of SetSource, for a version
 // newer than the running one and returns it, or nil when the app is up to
 // date.
 func (u *UpdaterModule) Check(ctx context.Context) (*Update, error) {
-	if !u.Enabled() {
+	if !u.Configured() {
 		return nil, ErrUpdatesDisabled
 	}
 	var src UpdateSource = feedSource(packageUpdateFeed)
@@ -263,62 +270,75 @@ func installTarget() (string, error) {
 // version current: from its delta for current when there is one, else, or
 // when the delta fails, from its archive, both downloaded with get.
 func installUpdate(ctx context.Context, get update.Getter, m update.Manifest, key, current, target string, progress func(downloaded, total int64)) error {
-	pub, err := update.ParsePublicKey(key)
+	prepared, err := prepareUpdate(ctx, get, m, key, current, target, progress, nil)
 	if err != nil {
 		return err
+	}
+	defer prepared.Close()
+	return prepared.install(ctx)
+}
+
+func prepareUpdate(ctx context.Context, get update.Getter, m update.Manifest, key, current, target string, progress func(downloaded, total int64), preparing func()) (*PreparedUpdate, error) {
+	pub, err := update.ParsePublicKey(key)
+	if err != nil {
+		return nil, err
 	}
 	// Next to the app, so that it can be renamed into place.
 	work, err := os.MkdirTemp(filepath.Dir(target), workPattern(target))
 	if err != nil {
-		return fmt.Errorf("cannot write next to the app: %w", err)
+		return nil, fmt.Errorf("cannot write next to the app: %w", err)
 	}
-	staged := false
+	retained := false
 	defer func() {
-		if !staged {
+		if !retained {
 			os.RemoveAll(work)
 		}
 	}()
 	unpacked := filepath.Join(work, "app")
-	swap := swapFiles
-	if runtime.GOOS == "darwin" {
-		swap = func(dir, target string) error {
-			err := stageBundle(work, dir, target)
-			staged = err == nil
-			return err
-		}
-	}
+	prepared := &PreparedUpdate{work: work, dir: unpacked, target: target}
 
 	if d := m.Delta(current); d != nil {
-		err := applyDelta(ctx, get, *d, pub, m.Version, target, work, unpacked, progress)
+		err := applyDelta(ctx, get, *d, pub, m.Version, target, work, unpacked, progress, preparing)
 		if err == nil {
-			return swap(unpacked, target)
+			if err := validatePreparedUpdate(unpacked); err != nil {
+				return nil, err
+			}
+			retained = true
+			return prepared, nil
 		}
 		if ctx.Err() != nil {
-			return err
+			return nil, err
 		}
 		log.Printf("mygo: downloading the whole update, as its delta update failed: %v", err)
 		if err := os.RemoveAll(unpacked); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	if m.Size <= 0 || m.Size > update.MaxArchiveSize {
-		return fmt.Errorf("invalid size %d", m.Size)
+		return nil, fmt.Errorf("invalid size %d", m.Size)
 	}
 	archive := filepath.Join(work, "update.tar.gz")
 	if err := download(ctx, get, m.URL, m.Size, m.Signature, pub, archive, progress); err != nil {
-		return err
+		return nil, err
+	}
+	if preparing != nil {
+		preparing()
 	}
 	f, err := os.Open(archive)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	err = update.ExtractArchive(f, unpacked)
 	f.Close()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return swap(unpacked, target)
+	if err := validatePreparedUpdate(unpacked); err != nil {
+		return nil, err
+	}
+	retained = true
+	return prepared, nil
 }
 
 // workPattern returns the pattern of the directory an update of the app
@@ -336,13 +356,16 @@ func workPattern(target string) string {
 // applyDelta downloads the delta d into work and makes the new version of
 // the app at target from it, in dir: its bundle on macOS, in dir too, as
 // the bundle of an archive is.
-func applyDelta(ctx context.Context, get update.Getter, d update.Delta, pub ed25519.PublicKey, version, target, work, dir string, progress func(downloaded, total int64)) error {
+func applyDelta(ctx context.Context, get update.Getter, d update.Delta, pub ed25519.PublicKey, version, target, work, dir string, progress func(downloaded, total int64), preparing func()) error {
 	if d.Size <= 0 || d.Size > update.MaxArchiveSize {
 		return fmt.Errorf("invalid size %d", d.Size)
 	}
 	path := filepath.Join(work, "update.delta")
 	if err := download(ctx, get, d.URL, d.Size, d.Signature, pub, path, progress); err != nil {
 		return err
+	}
+	if preparing != nil {
+		preparing()
 	}
 	f, err := os.Open(path)
 	if err != nil {

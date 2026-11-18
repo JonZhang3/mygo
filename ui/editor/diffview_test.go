@@ -1545,6 +1545,34 @@ func TestDiffLargeComparesOffMainThread(t *testing.T) {
 	}
 }
 
+// Changing the whitespace setting discards a running comparison that would
+// otherwise mark whitespace-only changes in the user's read-only diff.
+func TestDiffLargeIgnoresHorizontalSpaceAfterModeChange(t *testing.T) {
+	jobs := holdDiffs(t)
+	old := strings.Repeat("value\n", diffSyncLines)
+	newText := "\tvalue \n" + old[len("value\n"):]
+	d := &DiffState{Old: NewBuffer(old), New: NewBuffer(newText)}
+	tt := ui.NewTester(func(c *ui.Context) { DiffView(c, d).Fill() }, 800, 600)
+	if len(*jobs) != 1 {
+		t.Fatalf("started %d comparisons, want 1", len(*jobs))
+	}
+	d.IgnoreHorizontalSpace = true
+	tt.Frame()
+	if len(*jobs) != 2 {
+		t.Fatalf("started %d comparisons after changing mode, want 2", len(*jobs))
+	}
+	(*jobs)[0]()
+	tt.Frame()
+	if !d.Comparing() || len(d.Hunks()) != 0 {
+		t.Fatal("the previous mode's result was displayed")
+	}
+	(*jobs)[1]()
+	tt.Frame()
+	if d.Comparing() || len(d.Hunks()) != 0 {
+		t.Fatalf("whitespace-only edit still produced a change: %v", d.Hunks())
+	}
+}
+
 // Large texts no window shows are compared at once, as for an app's
 // Hunks with no view.
 func TestDiffLargeWithoutWindow(t *testing.T) {

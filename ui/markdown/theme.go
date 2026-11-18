@@ -38,6 +38,8 @@ type Theme struct {
 	// their size in ems: 0.875.
 	Code, CodeBackground Color
 	CodeSize             float32
+	// CodeBlockSize overrides CodeSize for fenced and indented code.
+	CodeBlockSize float32
 
 	// BlockSpacing is the space between blocks, in ems: 0.75. ItemSpacing
 	// is that between the items of a tight list: 0.25.
@@ -74,8 +76,10 @@ type Theme struct {
 	// and 0.4 down. TableMaxColumn is how wide a column grows before its
 	// cells wrap, in ems: 24.
 	TableBorder, TableHeader, TableStripe Color
-	TableCellPadding                      [2]float32
-	TableMaxColumn                        float32
+	// TableRowRules uses a full-width table with horizontal separators only.
+	TableRowRules    bool
+	TableCellPadding [2]float32
+	TableMaxColumn   float32
 
 	// Mark is the background of text marked with <mark>.
 	Mark Color

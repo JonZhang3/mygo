@@ -136,6 +136,9 @@ func (v *view) ReplaceText(r *ui.TextInputRange, s string) {
 	v.composeCaret, v.composeSelected = 0, ui.TextInputRange{}
 	v.reveal = true
 	v.publish()
+	if v.opts.OnEdit != nil {
+		v.opts.OnEdit()
+	}
 }
 
 func (v *view) SetMarkedText(r *ui.TextInputRange, s string, selected ui.TextInputRange) {
@@ -180,12 +183,16 @@ func (v *view) SetMarkedText(r *ui.TextInputRange, s string, selected ui.TextInp
 }
 
 func (v *view) UnmarkText() {
+	hadMarkedText := v.compose != ""
 	transaction := v.composing
 	v.commitCompose()
 	// GTK and IMM32 can end the composition before committing their
 	// replacement, which shares its step of undo.
 	v.composing = transaction
 	v.publish()
+	if hadMarkedText && v.opts.OnEdit != nil {
+		v.opts.OnEdit()
+	}
 }
 
 func (v *view) BoundsForRange(r ui.TextInputRange) (ui.Rect, ui.TextInputRange, bool) {

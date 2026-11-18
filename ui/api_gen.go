@@ -4849,6 +4849,17 @@ func (_handle Element) Drag(value any) Element {
 	return wrapElement(_node.Drag(value))
 }
 
+// DragPreview replaces the default copy of the drag source. Bounds are in
+// window coordinates at pickup. The painter and bounds are retained until the
+// drag ends, so a virtualized source can scroll out of view.
+func (_handle Element) DragPreview(bounds Rect, draw func(*Painter, Rect)) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	return wrapElement(_node.DragPreview(bounds, draw))
+}
+
 // DragData makes e a native drag source after a primary press moves a few
 // DIPs. Data can go to other windows and applications. A source also given
 // Drag(value) offers that value to typed targets in this process only.

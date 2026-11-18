@@ -169,6 +169,8 @@ type ParagraphStyle struct {
 	// independent of Indent, which remains the nesting level of a list item.
 	QuoteDepth int  `json:"quoteDepth,omitempty"`
 	CodeBlock  bool `json:"codeBlock,omitempty"`
+	// CodeLanguage is the language named by a fenced code block.
+	CodeLanguage string `json:"codeLanguage,omitempty"`
 	// ID is the app's name for the paragraph, the key of what it keeps
 	// about it, which the editor does not show. It stays with the
 	// paragraph's text as it is edited (see Text.Replace): a paragraph

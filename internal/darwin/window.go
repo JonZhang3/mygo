@@ -144,10 +144,12 @@ type window struct {
 	host     *window
 	// foreign is set for a view of a native module that the surface shows
 	// as it shows a web view (EmbedView): web is that view, not WebKit's.
-	foreign bool
-	clip    id
-	pane    id
-	mask    id
+	foreign       bool
+	embedded      bool
+	embeddedFocus func()
+	clip          id
+	pane          id
+	mask          id
 	// pointerIn tells that the page of a web view has the pointer, where
 	// nothing the content painted covers it.
 	pointerIn bool
@@ -1229,6 +1231,10 @@ func (w *window) IsVisible() bool {
 }
 
 func (w *window) Focus() {
+	if !w.closed && w.embeddedFocus != nil {
+		w.embeddedFocus()
+		return
+	}
 	if w.host != nil {
 		if !w.closed {
 			send(w.win, "makeFirstResponder:", uintptr(w.web))

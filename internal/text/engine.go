@@ -286,14 +286,51 @@ func features(list string) []feature {
 	return out
 }
 
-// familyList splits a comma-separated list of families, without quotes.
+// familyList splits a comma-separated list while retaining punctuation inside
+// quoted family names. Escaped quotes and backslashes belong to the name, not
+// the list syntax. Hearth quotes each user-selected font as one literal family.
 func familyList(family string) []string {
 	var out []string
-	for _, f := range strings.Split(family, ",") {
-		if f = strings.Trim(strings.TrimSpace(f), `"'`); f != "" {
-			out = append(out, f)
+	var name strings.Builder
+	var quote rune
+	escaped := false
+	appendName := func() {
+		if value := strings.TrimSpace(name.String()); value != "" {
+			out = append(out, value)
+		}
+		name.Reset()
+	}
+	for _, r := range family {
+		if escaped {
+			name.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			} else {
+				name.WriteRune(r)
+			}
+			continue
+		}
+		switch r {
+		case '\'', '"':
+			quote = r
+		case ',':
+			appendName()
+		default:
+			name.WriteRune(r)
 		}
 	}
+	if escaped {
+		name.WriteRune('\\')
+	}
+	appendName()
 	return out
 }
 

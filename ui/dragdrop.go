@@ -32,9 +32,23 @@ type valueDrag struct {
 	ghost    *node
 	canceled bool
 	native   bool
+	preview  dragPreview
 	// count is how many things the value stands for, as rows dragged
 	// (countedDrag), for the badge beside the pointer.
 	count int
+}
+
+type dragPreview struct {
+	bounds Rect
+	draw   func(*Painter, Rect)
+}
+
+// DragPreview replaces the default copy of the drag source. Bounds are in
+// window coordinates at pickup. The painter and bounds are retained until the
+// drag ends, so a virtualized source can scroll out of view.
+func (e *node) DragPreview(bounds Rect, draw func(*Painter, Rect)) *node {
+	e.st.dragPreview = dragPreview{bounds, draw}
+	return e
 }
 
 // Drag makes the element the source of value, dragged within the window
@@ -140,6 +154,13 @@ func (rt *engine) valueTarget(x, y float32, value any) uint64 {
 // dragMove starts dragging the source pressed once the pointer moved
 // far enough, and follows the element under it.
 func (rt *engine) dragMove(x, y float32) {
+	if d := rt.drag; d != nil && !d.native && d.preview.draw != nil {
+		if !d.canceled {
+			d.over = rt.valueTarget(x, y, d.value)
+			rt.requestFrame()
+		}
+		return
+	}
 	s := rt.pressed
 	if s == nil || rt.pressButton != 0 {
 		return
@@ -167,6 +188,9 @@ func (rt *engine) dragMove(x, y float32) {
 			return
 		}
 		d = &valueDrag{src: s.id, value: value, offX: s.pressX, offY: s.pressY, count: count}
+		d.preview = s.dragPreview
+		d.preview.bounds.X -= px
+		d.preview.bounds.Y -= py
 		rt.drag = d
 		if src := s.dataSource; src != nil {
 			d.native = true
@@ -352,6 +376,13 @@ func (rt *engine) dragScroll() {
 func (rt *engine) paintDrag(p *Painter, w, h float32) {
 	d := rt.drag
 	if d == nil || d.canceled || d.native {
+		return
+	}
+	if draw := d.preview.draw; draw != nil {
+		r := d.preview.bounds
+		r.X += rt.pointerX
+		r.Y += rt.pointerY
+		draw(p, r)
 		return
 	}
 	e := d.elem

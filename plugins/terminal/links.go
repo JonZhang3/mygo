@@ -18,6 +18,53 @@ var urlPattern = regexp.MustCompile(`(?:(?:https?|ftp|file)://|mailto:)[^\s"'<>`
 // puts no space around it; a quoted path may hold them.
 const proseDelimiters = "，。；：！？、（）【】《》「」『』"
 
+var barePathPattern = regexp.MustCompile(`(?:\.{1,2}/?|[\p{L}\p{N}_@+-][\p{L}\p{N}_.@+-]*)(?::[0-9]+(?::[0-9]+)?)?`)
+var escapedPathPattern = regexp.MustCompile(`[^\s'"<>\\]+(?:\\[ \t][^\s'"<>\\]+)+`)
+var longListingName = regexp.MustCompile(`^[bcdlpsD-][rwxstST-]{9}[@+.]?\s+\d+\s+\S+\s+\S+\s+\d+\s+(?:\S+\s+\d{1,2}\s+\d[\d:]*(?:\s+[AP]M)?|\d{4}-\d\d-\d\d\s+\d\d:\d\d)\s+(.+)$`)
+
+func listingPathAt(text []rune, cols []int, col int) (string, int, int, bool) {
+	s := strings.TrimRight(string(text), " ")
+	match := longListingName.FindStringSubmatchIndex(s)
+	if match == nil {
+		return "", 0, 0, false
+	}
+	start, end := match[2], match[3]
+	if s[0] == 'l' {
+		if arrow := strings.Index(s[start:end], " -> "); arrow >= 0 {
+			end = start + arrow
+		}
+	}
+	if end-start > 1 && (s[start] == '\'' || s[start] == '"') && s[end-1] == s[start] {
+		start++
+		end--
+	}
+	value, x0, x1 := textLinkAt(s, cols, col, start, end)
+	return unescapeLinkPath(value), x0, x1, true
+}
+
+func matchPathAt(pattern *regexp.Regexp, text []rune, cols []int, col int) (string, int, int) {
+	s := string(text)
+	for _, m := range pattern.FindAllStringIndex(s, -1) {
+		if value, x0, x1 := textLinkAt(s, cols, col, m[0], m[1]); value != "" {
+			return unescapeLinkPath(value), x0, x1
+		}
+	}
+	return "", 0, 0
+}
+
+var linkPathEscapes = strings.NewReplacer("\\ ", " ", "\\\t", "\t")
+
+func unescapeLinkPath(value string) string { return linkPathEscapes.Replace(value) }
+
+func textLinkAt(s string, cols []int, col, a, b int) (string, int, int) {
+	start := utf8.RuneCountInString(s[:a])
+	end := start + utf8.RuneCountInString(s[a:b])
+	if start < end && end <= len(cols) && cols[start] <= col && col <= cols[end-1] {
+		return s[a:b], cols[start], cols[end-1] + 1
+	}
+	return "", 0, 0
+}
+
 // pathToken finds what may be a file path programs print as text, unquoted:
 // a run of anything but spaces, quotes and proseDelimiters.
 var pathToken = regexp.MustCompile(`[^\s"'<>` + "`" + proseDelimiters + `]+`)

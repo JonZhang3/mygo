@@ -418,7 +418,7 @@ func (p *Painter) element(e *node) {
 			p.inline = e
 			if spans := e.paintSpans(&sp); !e.contentSet || !p.contentText(e, ox, oy, ts, spans) {
 				p.textLayout(e.tl, ox, oy, ts.color, ts, spans)
-				if e.objectFn != nil {
+				if paintObjects != nil && (e.objectFn != nil || e.first != nil) {
 					paintObjects(p, e.tl, ox, oy, e.objectFn)
 				}
 			}
@@ -969,7 +969,24 @@ func (p *Painter) textObjects(l *text.Layout, x, y float32, fn func(p *Painter, 
 			r := Rect{x + g.X, y + line.Baseline - h, g.Advance, h + d}
 			p.transform = saved.Mul(p.inlineTransform(g.Cluster))
 			if p.visible(r, 0) {
-				fn(p, g.Cluster, r)
+				draw, at := fn, g.Cluster
+				for e, offset := p.inline, 0; e != nil; {
+					if e.objectFn != nil {
+						draw, at = e.objectFn, g.Cluster-offset
+					}
+					var next *node
+					for ch := e.first; ch != nil; ch = ch.next {
+						if g.Cluster >= offset+ch.runes[0] && g.Cluster < offset+ch.runes[1] {
+							next = ch
+							offset += ch.runes[0]
+							break
+						}
+					}
+					e = next
+				}
+				if draw != nil {
+					draw(p, at, r)
+				}
 			}
 		}
 	}

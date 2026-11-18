@@ -434,9 +434,14 @@ func (t *Terminal) ScrollToRow(row int) {
 
 // CellAt returns the cell at column x of row y of the viewport.
 func (t *Terminal) CellAt(x, y int) (GridRef, bool) {
+	return t.gridCellAt(x, y, pointViewport)
+}
+
+func (t *Terminal) gridCellAt(x, y int, tag int32) (GridRef, bool) {
 	ref := GridRef{size: unsafe.Sizeof(GridRef{})}
-	p := point{tag: 1, x: uint16(max(0, min(x, 0xFFFF))), y: uint32(max(y, 0))}
-	return ref, terminalGridRef(t.h, p, &ref) == 0
+	p := point{tag: tag, x: uint16(max(0, min(x, 0xFFFF))), y: uint32(max(y, 0))}
+	found := terminalGridRef(t.h, p, &ref) == 0
+	return ref, found
 }
 
 // SetResizePullBack sets whether growing the screen pulls rows back from
@@ -449,10 +454,49 @@ func (t *Terminal) SetResizePullBack(v bool) {
 // RowText returns the text of row y of the viewport, and the column of
 // each of its runes.
 func (t *Terminal) RowText(y int) (text []rune, cols []int) {
+	return t.rowText(y, pointViewport)
+}
+
+// LogicalRowText joins the soft-wrapped rows containing viewport row y.
+// Offset is the column of that viewport row in the joined line.
+func (t *Terminal) LogicalRowText(y int) (text []rune, cols []int, offset int) {
+	width, _ := t.Size()
+	scrollbar := t.Scrollbar()
+	row := int(scrollbar.Offset) + y
+	if width <= 0 || y < 0 || y >= int(scrollbar.Len) || row >= int(scrollbar.Total) {
+		return nil, nil, 0
+	}
+	first, last := row, row
+	// Bound grid reads during hover. A partial logical line can open the wrong target.
+	maxRows := min(256, max(2, 8192/width+2))
+	for first > 0 && t.gridRowWraps(first-1) {
+		first--
+		if row-first >= maxRows {
+			return nil, nil, 0
+		}
+	}
+	for last+1 < int(scrollbar.Total) && t.gridRowWraps(last) {
+		last++
+		if last-first >= maxRows {
+			return nil, nil, 0
+		}
+	}
+	for current := first; current <= last; current++ {
+		rowText, rowCols := t.rowText(current, pointScreen)
+		for i := range rowCols {
+			rowCols[i] += (current - first) * width
+		}
+		text = append(text, rowText...)
+		cols = append(cols, rowCols...)
+	}
+	return text, cols, (row - first) * width
+}
+
+func (t *Terminal) rowText(y int, tag int32) (text []rune, cols []int) {
 	c, _ := t.Size()
 	var buf [16]uint32
 	for x := range c {
-		ref, found := t.CellAt(x, y)
+		ref, found := t.gridCellAt(x, y, tag)
 		if !found {
 			break
 		}
@@ -490,18 +534,29 @@ const (
 // Row returns how row y of the viewport belongs to a shell's prompt, and
 // whether it soft-wraps into the next.
 func (t *Terminal) Row(y int) (prompt RowPrompt, wrap bool) {
-	ref, found := t.CellAt(0, y)
+	row, found := t.gridRow(y, pointViewport)
 	if !found {
-		return NoPrompt, false
-	}
-	var row uint64
-	if !ok(call(fnGridRefRow, uintptr(unsafe.Pointer(&ref)), uintptr(unsafe.Pointer(&row)))) {
 		return NoPrompt, false
 	}
 	if !ok(call(fnRowData, uintptr(row), rowDataSemanticPrompt, uintptr(unsafe.Pointer(&prompt)))) {
 		prompt = NoPrompt
 	}
 	return prompt, ok(call(fnRowData, uintptr(row), rowDataWrap, uintptr(unsafe.Pointer(&wrap)))) && wrap
+}
+
+func (t *Terminal) gridRowWraps(y int) bool {
+	row, found := t.gridRow(y, pointScreen)
+	var wrap bool
+	return found && ok(call(fnRowData, uintptr(row), rowDataWrap, uintptr(unsafe.Pointer(&wrap)))) && wrap
+}
+
+func (t *Terminal) gridRow(y int, tag int32) (row uint64, found bool) {
+	ref, found := t.gridCellAt(0, y, tag)
+	if !found {
+		return 0, false
+	}
+	found = ok(call(fnGridRefRow, uintptr(unsafe.Pointer(&ref)), uintptr(unsafe.Pointer(&row))))
+	return row, found
 }
 
 // Hyperlink returns the URI of the hyperlink (OSC 8) of a cell, or "".

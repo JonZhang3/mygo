@@ -63,13 +63,18 @@ func (st *viewState) table(c *ui.Context, i int, base spanStyle) ui.Element {
 	ts.widths = append(ts.widths[:0], widths...)
 	scroll := ui.ScrollHorizontal(c).AlignSelf(ui.Stretch)
 	return scroll.Children(func() {
-		grid := ui.Column(c).Border(1, th.TableBorder).Radius(th.em(0.3)).Clip().Shrink(0).Role(ui.RoleTable)
+		grid := ui.Column(c).Shrink(0).Role(ui.RoleTable)
+		if th.TableRowRules {
+			grid.MinWidthPercent(100)
+		} else {
+			grid.Border(1, th.TableBorder).Radius(th.em(0.3)).Clip()
+		}
 		grid.Children(func() {
 			n := 0
 			for r := i + 1; r < d.Block(i).Next; r = d.Block(r).Next {
 				row := d.Block(r)
 				rowEl := ui.Row(c).Role(ui.RoleRow).AlignItems(ui.Stretch)
-				if row.Header {
+				if row.Header && !th.TableRowRules {
 					rowEl.Background(th.TableHeader)
 				} else if n%2 == 1 && th.TableStripe.A > 0 {
 					rowEl.Background(th.TableStripe)
@@ -96,7 +101,9 @@ func (st *viewState) table(c *ui.Context, i int, base spanStyle) ui.Element {
 							role = ui.RoleColumnHeader
 						}
 						box := ui.Column(c).Width(widths[k]).Padding(padY, padX).Role(role)
-						if k > 0 {
+						if th.TableRowRules {
+							box.Grow(1)
+						} else if k > 0 {
 							box.BorderWidth(0, 0, 0, 1).BorderColor(th.TableBorder)
 						}
 						align := ui.Start

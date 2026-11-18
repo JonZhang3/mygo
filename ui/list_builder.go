@@ -12,6 +12,10 @@ type ListRow struct {
 	selected bool
 }
 
+// Element returns the retained row container, for custom visuals and tree semantics.
+// Style it during Rows; its identity remains owned by the virtual list.
+func (r ListRow) Element() Element { return r.row }
+
 func (r ListRow) Selected() bool    { return r.owner.Valid() && r.selected }
 func (r ListRow) ListFocused() bool { return r.owner.FocusWithin() }
 

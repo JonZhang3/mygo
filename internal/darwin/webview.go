@@ -43,20 +43,10 @@ func (s *surface) NewWebView(o *platform.WindowOptions, h platform.WindowHandler
 		v.delegate = alloc("MyGoWindowDelegate")
 		v.createWebView(NSRect{})
 		send(v.web, "setAutoresizingMask:", 0)
-		v.clip = msgInitRect(send(class("MyGoClipView"), "alloc"), sel("initWithFrame:"), NSRect{})
-		send(v.clip, "setWantsLayer:", 1)
-		send(send(v.clip, "layer"), "setMasksToBounds:", 1)
-		send(v.clip, "setAutoresizingMask:", nsViewMinYMargin)
-		send(v.clip, "setHidden:", 1)
-		v.pane = msgInitRect(send(class("MyGoClipView"), "alloc"), sel("initWithFrame:"), NSRect{})
-		send(v.pane, "setWantsLayer:", 1)
-		send(send(v.pane, "layer"), "setMasksToBounds:", 1)
+		s.attachWebPane(v)
 		if o.BackgroundColor != nil && !o.Transparent {
 			v.clipBackground(*o.BackgroundColor)
 		}
-		send(v.pane, "addSubview:", uintptr(v.web))
-		send(v.clip, "addSubview:", uintptr(v.pane))
-		send(host.view, "addSubview:positioned:relativeTo:", uintptr(v.clip), nsWindowBelow, uintptr(s.view))
 	})
 	b.byDelegate[v.delegate] = v
 	b.byWebView[v.web] = v
@@ -92,6 +82,48 @@ func (s *surface) EmbedView(view uintptr) (platform.WebView, error) {
 	})
 	host.webViews = append(host.webViews, v)
 	return v, nil
+}
+
+// NewEmbeddedView allocates a native guest container in the surface's web
+// layer. The guest uses the same placement and overlay hit testing as WebKit.
+func (s *surface) NewEmbeddedView(focus func()) (platform.WebView, uintptr) {
+	embeddedViewOnce.Do(func() {
+		classDef("MyGoEmbeddedWebView", "NSView", nil, []objc.MethodDef{
+			method("isAccessibilityElement", func(id, objc.SEL) bool { return true }),
+			method("accessibilityRole", func(id, objc.SEL) id { return nsString("AXGroup") }),
+			method("accessibilityParent", func(self id, cmd objc.SEL) id {
+				if w := theBackend.byWebView[self]; w != nil && w.accessParent != 0 {
+					return w.accessParent
+				}
+				return sendSuper(self, "MyGoEmbeddedWebView", cmd)
+			}),
+		})
+	})
+	host := s.w
+	v := &window{b: host.b, win: host.win, host: host, embedded: true, embeddedFocus: focus}
+	withPool(func() {
+		v.web = msgInitRect(send(class("MyGoEmbeddedWebView"), "alloc"), sel("initWithFrame:"), NSRect{})
+		s.attachWebPane(v)
+	})
+	host.b.byWebView[v.web] = v
+	host.webViews = append(host.webViews, v)
+	return v, uintptr(v.web)
+}
+
+var embeddedViewOnce sync.Once
+
+func (s *surface) attachWebPane(v *window) {
+	v.clip = msgInitRect(send(class("MyGoClipView"), "alloc"), sel("initWithFrame:"), NSRect{})
+	send(v.clip, "setWantsLayer:", 1)
+	send(send(v.clip, "layer"), "setMasksToBounds:", 1)
+	send(v.clip, "setAutoresizingMask:", nsViewMinYMargin)
+	send(v.clip, "setHidden:", 1)
+	v.pane = msgInitRect(send(class("MyGoClipView"), "alloc"), sel("initWithFrame:"), NSRect{})
+	send(v.pane, "setWantsLayer:", 1)
+	send(send(v.pane, "layer"), "setMasksToBounds:", 1)
+	send(v.pane, "addSubview:", uintptr(v.web))
+	send(v.clip, "addSubview:", uintptr(v.pane))
+	send(s.w.view, "addSubview:positioned:relativeTo:", uintptr(v.clip), nsWindowBelow, uintptr(s.view))
 }
 
 // nsWindowBelow is NSWindowBelow, for addSubview:positioned:relativeTo:.
@@ -349,6 +381,10 @@ func (w *window) pressed(ev id, button int) {
 // going back: the web view follows the surface in the loop, or precedes
 // it.
 func (w *window) TabInto(back bool) {
+	if !w.closed && w.embeddedFocus != nil {
+		w.embeddedFocus()
+		return
+	}
 	s := w.host.surface
 	if w.closed || s == nil {
 		return
@@ -377,6 +413,14 @@ func (w *window) tabOut(back bool) {
 		ev.Mods = platform.ModShift
 	}
 	s.send(ev)
+}
+
+func (w *window) EmbeddedTabOut(back bool) { w.tabOut(back) }
+
+func (w *window) EmbeddedRestoreHostFocus() {
+	if s := w.host.surface; s != nil && w.hasKeyboard() {
+		send(w.win, "makeFirstResponder:", uintptr(s.view))
+	}
 }
 
 // webViewOf returns the web view that is view or holds it.
@@ -409,27 +453,28 @@ func (w *window) closeWebView() {
 			release(w.clip)
 			return
 		}
-		w.stopObserving()
-		send(w.ucc, "removeScriptMessageHandlerForName:", uintptr(nsString("mygo")))
-		if w.opts.PictureInPicture {
-			send(w.ucc, "removeScriptMessageHandlerForName:", uintptr(nsString(pipHandler)))
+		if !w.embedded {
+			w.stopObserving()
+			send(w.ucc, "removeScriptMessageHandlerForName:", uintptr(nsString("mygo")))
+			if w.opts.PictureInPicture {
+				send(w.ucc, "removeScriptMessageHandlerForName:", uintptr(nsString(pipHandler)))
+			}
+			send(w.ucc, "removeAllUserScripts")
+			send(w.web, "stopLoading")
+			send(w.web, "setNavigationDelegate:", 0)
+			send(w.web, "setUIDelegate:", 0)
+			delete(b.byDelegate, w.delegate)
+			release(w.lastMouseDown)
+			w.lastMouseDown = 0
+			release(w.ucc)
+			autorelease(w.delegate)
 		}
-		send(w.ucc, "removeAllUserScripts")
-		send(w.web, "stopLoading")
-		send(w.web, "setNavigationDelegate:", 0)
-		send(w.web, "setUIDelegate:", 0)
-		send(w.clip, "removeFromSuperview")
-		delete(b.byDelegate, w.delegate)
 		delete(b.byWebView, w.web)
-		release(w.lastMouseDown)
-		w.lastMouseDown = 0
-		release(w.ucc)
+		send(w.clip, "removeFromSuperview")
 		release(w.web)
 		release(w.mask)
 		release(w.pane)
 		release(w.clip)
-		// WebKit may still hold the delegate as the page goes.
-		autorelease(w.delegate)
 	})
 	h := w.host
 	h.webViews = slices.DeleteFunc(h.webViews, func(v *window) bool { return v == w })

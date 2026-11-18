@@ -7,23 +7,26 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // finder is an editor's find bar and its matches, as Zed's buffer
 // search: a query, case sensitive or not, whole words, a regular
 // expression, in the selections or everywhere, and its replacement.
 type finder struct {
-	open        bool
-	replacing   bool
-	query       string
-	replace     string
-	caseSens    bool
-	wholeWord   bool
-	regex       bool
-	inSelection bool
-	scope       []sel
-	focusQuery  bool
-	typed       string // the query as the matches were last chosen for
+	open         bool
+	replacing    bool
+	query        string
+	replace      string
+	caseSens     bool
+	wholeWord    bool
+	regex        bool
+	inSelection  bool
+	preserveCase bool
+	scope        []sel
+	focusQuery   bool
+	typed        string // the query as the matches were last chosen for
 	// The matches of the last search, and the text and options it was of;
 	// subs are a regular expression's submatches, as found in the text.
 	matches  []diffRange
@@ -329,7 +332,7 @@ func (f *finder) replaceOne(ed *editor) {
 // replaceAll replaces every match, as one step of undo.
 func (f *finder) replaceAll(ed *editor) {
 	f.search(ed)
-	if len(f.matches) == 0 {
+	if len(f.matches) == 0 || len(f.matches) >= maxMatches {
 		return
 	}
 	edits := make([]Edit, len(f.matches))
@@ -343,7 +346,7 @@ func (f *finder) replaceAll(ed *editor) {
 // textForReplacing returns the text a regular expression's replacements
 // expand their submatches from, nothing else needing it.
 func (f *finder) textForReplacing(ed *editor) string {
-	if !f.regex || len(f.subs) == 0 {
+	if !f.preserveCase && (!f.regex || len(f.subs) == 0) {
 		return ""
 	}
 	return ed.view.text.String()
@@ -353,18 +356,53 @@ func (f *finder) textForReplacing(ed *editor) string {
 // $1 and ${name} expanded for a regular expression, from the submatches
 // found in the whole text, as \b and ^ need the text around a match.
 func (f *finder) replacement(text string, i int) string {
-	if !f.regex || i >= len(f.subs) {
-		return f.replace
+	result := f.replace
+	if f.regex && i < len(f.subs) {
+		pat := f.query
+		if !f.caseSens {
+			pat = "(?i)" + pat
+		}
+		if re, err := regexp.Compile("(?m)" + pat); err == nil {
+			result = string(re.ExpandString(nil, f.replace, text, f.subs[i]))
+		}
 	}
-	pat := f.query
-	if !f.caseSens {
-		pat = "(?i)" + pat
+	if f.preserveCase && i < len(f.matches) {
+		m := f.matches[i]
+		return preserveMatchCase(text[m.start:m.end], result)
 	}
-	re, err := regexp.Compile("(?m)" + pat)
-	if err != nil {
-		return f.replace
+	return result
+}
+
+func preserveMatchCase(matched, result string) string {
+	if matched == "" || result == "" {
+		return result
 	}
-	return string(re.ExpandString(nil, f.replace, text, f.subs[i]))
+	for _, sep := range []string{"-", "_"} {
+		if count := strings.Count(matched, sep); count > 0 && count == strings.Count(result, sep) {
+			a, b := strings.Split(matched, sep), strings.Split(result, sep)
+			for i := range b {
+				b[i] = preserveMatchCase(a[i], b[i])
+			}
+			return strings.Join(b, sep)
+		}
+	}
+	switch {
+	case strings.ToUpper(matched) == strings.ToLower(matched):
+		return result
+	case matched == strings.ToUpper(matched):
+		return strings.ToUpper(result)
+	case matched == strings.ToLower(matched):
+		return strings.ToLower(result)
+	}
+	first, _ := utf8.DecodeRuneInString(matched)
+	next, width := utf8.DecodeRuneInString(result)
+	if unicode.IsUpper(first) {
+		return string(unicode.ToUpper(next)) + result[width:]
+	}
+	if unicode.IsLower(first) {
+		return string(unicode.ToLower(next)) + result[width:]
+	}
+	return result
 }
 
 // status is what the bar says of the matches, in the language of tx.

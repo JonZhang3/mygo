@@ -1278,6 +1278,18 @@ func (n *Notification) ShowContext(ctx context.Context) error {
 	return err
 }
 
+// Release detaches this object's click callbacks without removing the delivered
+// OS notification. App.OnNotificationClick continues to receive its ID, including
+// after a restart. Releasing an older object never detaches a replacement with
+// the same ID. It is safe to call from any goroutine and more than once.
+func (n *Notification) Release() {
+	notifications.Lock()
+	if notifications.byID[n.id] == n {
+		delete(notifications.byID, n.id)
+	}
+	notifications.Unlock()
+}
+
 // Close removes the notification.
 func (n *Notification) Close() {
 	notifications.Lock()

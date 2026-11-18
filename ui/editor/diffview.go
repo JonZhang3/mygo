@@ -38,6 +38,9 @@ type DiffState struct {
 	Editable bool
 	// Inline highlights what changed within changed lines.
 	Inline DiffInline
+	// IgnoreHorizontalSpace compares lines without spaces or tabs while
+	// keeping their original text and line numbers visible.
+	IgnoreHorizontalSpace bool
 	// Indicators mark changed lines: with bars, + and -, or nothing.
 	Indicators DiffIndicators
 	// ContextLines is how many unchanged lines show around changes, 3
@@ -242,6 +245,9 @@ func (d *DiffState) ensure() {
 		d.prepared = diffPrepared{}
 	}
 	d.model.set(d.Old, d.New, !d.Editable)
+	if d.partial == nil {
+		d.model.compareSpace(d.IgnoreHorizontalSpace)
+	}
 	d.model.update()
 	// The lines revealed move with edits of the old text, as Keep makes,
 	// and go with it.
