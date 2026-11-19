@@ -26,13 +26,14 @@ type Content interface {
 
 // attachContent connects the window's Content to its surface. Main thread
 // only.
-func (w *Window) attachContent(content Content) {
+func (w *Window) attachContent(content Content, forceSRGB bool) {
 	s := w.native.Surface()
 	if s == nil {
 		panic("mygo: the backend " + backend().Name() + " created no surface for the window's Content")
 	}
 	w.conn = &surface.Conn{
 		Surface:        s,
+		ForceSRGB:      forceSRGB,
 		Window:         w,
 		Clipboard:      backend().Clipboard(),
 		StartDataDrag:  w.startDataDrag,

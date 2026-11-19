@@ -322,6 +322,14 @@ func (h *windowHost) event(ev platform.SurfaceEvent) bool {
 	if h.detached {
 		return false // the window closed: it draws nothing more
 	}
+	if stats := h.rt.stats; stats != nil {
+		switch {
+		case ev.Kind == platform.SurfaceResize:
+			stats.resize++
+		case ev.Kind >= platform.PointerMove && ev.Kind <= platform.TextComposition:
+			stats.input++
+		}
+	}
 	if ev.Kind == platform.SurfaceRenew {
 		// The next frame makes the renderer again, for the surface's new
 		// native objects.
@@ -579,6 +587,9 @@ func (h *windowHost) idle() {
 // useWide has the GPU renderer draw the colors of s outside the sRGB gamut
 // when the window shows them (see wideHold), and reports whether it does.
 func (h *windowHost) useWide(s *scene.Scene, now time.Time) bool {
+	if h.conn.ForceSRGB {
+		return false
+	}
 	w, ok := h.gpu.(wideRenderer)
 	if !ok {
 		return false
@@ -608,6 +619,11 @@ func (h *windowHost) render(s *scene.Scene) bool {
 	for try := 0; h.gpu != nil; try++ {
 		g := h.gpu
 		err := g.Render(s)
+		if stats := h.rt.stats; stats != nil {
+			if renderer, ok := g.(interface{ FrameSubmissions() uint64 }); ok {
+				stats.recordSubmissions(renderer, renderer.FrameSubmissions())
+			}
+		}
 		if err == nil {
 			return true
 		}

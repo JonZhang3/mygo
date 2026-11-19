@@ -454,6 +454,9 @@ func (p *Painter) drawIcon(s *SVG, r Rect, c Color, rotate float32) {
 // rasterizeIcon draws the mask of the icon job: the coverage of its SVG,
 // whatever its colors.
 func (rt *engine) rasterizeIcon() (int, int, []byte) {
+	if rt.stats != nil {
+		rt.stats.svg++
+	}
 	j := &rt.svgs.job
 	img := rt.canvasFor(j.cw, j.ch)
 	o := j.s.options(color.NRGBA{A: 255}, j.dark, rt.text)
@@ -547,6 +550,9 @@ func (rt *engine) picture(k pictureKey) *scene.Image {
 	c := k.color
 	o := k.s.options(color.NRGBA{c.R, c.G, c.B, c.A}, k.dark, rt.text)
 	o.Stretch = k.stretch
+	if rt.stats != nil {
+		rt.stats.svg++
+	}
 	k.s.doc.Draw(&image.RGBA{Pix: img.Pix, Stride: k.w * 4, Rect: image.Rect(0, 0, k.w, k.h)}, o)
 	img.Changed()
 	pics[k] = &picture{img: img, used: rt.frame}

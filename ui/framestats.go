@@ -67,13 +67,16 @@ const (
 
 // frameStats measures a frame for MYGO_FRAME_STATS.
 type frameStats struct {
-	threshold   time.Duration
-	start, last time.Time
-	laps        [phases]time.Duration
-	passes      int
-	samples     [stats]metrics.Sample
-	before      [stats]float64
-	layouts     uint64 // the text system's, before the frame
+	threshold                                             time.Duration
+	start, last                                           time.Time
+	laps                                                  [phases]time.Duration
+	passes                                                int
+	samples                                               [stats]metrics.Sample
+	before                                                [stats]float64
+	layouts                                               uint64 // the text system's, before the frame
+	application, animation, input, resize, svg, submitted uint64
+	renderer                                              interface{ FrameSubmissions() uint64 }
+	previousSubmissions                                   uint64
 	// rateFrom is when the frames counted for the rate began (rate),
 	// rateFrames how many ended since, the last at rateLast.
 	rateFrom, rateLast time.Time
@@ -134,11 +137,22 @@ func (f *frameStats) lap(phase int) {
 	f.last = now
 }
 
+// recordSubmissions counts Metal command buffers committed since the last frame.
+func (f *frameStats) recordSubmissions(renderer interface{ FrameSubmissions() uint64 }, total uint64) {
+	if f.renderer != renderer {
+		f.renderer, f.previousSubmissions = renderer, 0
+	}
+	f.submitted += total - f.previousSubmissions
+	f.previousSubmissions = total
+}
+
 // end logs the frame if it took longer than the threshold.
 func (f *frameStats) end(rt *engine) {
 	if f == nil {
 		return
 	}
+	counts := [6]uint64{f.application, f.animation, f.input, f.resize, f.svg, f.submitted}
+	f.application, f.animation, f.input, f.resize, f.svg, f.submitted = 0, 0, 0, 0, 0, 0
 	end := time.Now()
 	total := end.Sub(f.start)
 	if pacing.Uncapped {
@@ -178,9 +192,9 @@ func (f *frameStats) end(rt *engine) {
 	if d[statCycles] > 0 || d[statAssist] > 0 {
 		gc = fmt.Sprintf("GC: %.0f cycles ended, %s ms of assists", d[statCycles], ms(time.Duration(d[statAssist]*float64(time.Second))))
 	}
-	frameLog(fmt.Sprintf("mygo: frame %d took %s ms: build %s%s, layout %s, paint %s, present %s (%s), other %s; meanwhile the process made about %.0f allocations, %.1f KB, %d text layouts; %s",
+	frameLog(fmt.Sprintf("mygo: frame %d took %s ms: build %s%s, layout %s, paint %s, present %s (%s), other %s; meanwhile the process made about %.0f allocations, %.1f KB, %d text layouts; %s; window %p, application %d, animation %d, input %d, resize %d, SVG %d, Metal submissions %d",
 		rt.frame, ms(total), ms(f.laps[phaseBuild]), passes, ms(f.laps[phaseLayout]), ms(f.laps[phasePaint]), ms(f.laps[phasePresent]), path, ms(other),
-		d[statObjects]+d[statTiny], d[statBytes]/1024, rt.text.LayoutsMade()-f.layouts, gc))
+		d[statObjects]+d[statTiny], d[statBytes]/1024, rt.text.LayoutsMade()-f.layouts, gc, rt, counts[0], counts[1], counts[2], counts[3], counts[4], counts[5]))
 }
 
 // rate counts a frame that ran from start to end while frames are uncapped

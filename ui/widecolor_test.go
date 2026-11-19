@@ -282,13 +282,19 @@ var _ platform.WideGamutSurface = (*wideSurface)(nil)
 // gamut, only on a screen showing one, and for a while after the last.
 func TestWideFramesOnGPU(t *testing.T) {
 	for _, c := range []struct {
-		name        string
-		screen, can bool
-	}{{"a wide screen", true, true}, {"an sRGB screen", false, true}, {"a renderer that cannot", true, false}} {
+		name                   string
+		screen, can, forceSRGB bool
+	}{
+		{"a wide screen", true, true, false},
+		{"an sRGB screen", false, true, false},
+		{"a renderer that cannot", true, false, false},
+		{"an sRGB window on a wide screen", true, true, true},
+	} {
 		t.Run(c.name, func(t *testing.T) {
 			g := &wideGPU{can: c.can}
 			h, _, frame := gpuHost(t, func() (gpuRenderer, error) { return g, nil })
 			h.conn.Surface = &wideSurface{wide: c.screen}
+			h.conn.ForceSRGB = c.forceSRGB
 			caret := false
 			h.rt = newRuntime(func(c *context) {
 				coreBox(c).Fill().Background(RGB(200, 200, 200)).Children(func() {
@@ -298,7 +304,7 @@ func TestWideFramesOnGPU(t *testing.T) {
 					}
 				})
 			}, h)
-			wide := c.screen && c.can
+			wide := c.screen && c.can && !c.forceSRGB
 			step := func(what string, show, inWide bool) {
 				t.Helper()
 				caret = show
@@ -318,7 +324,7 @@ func TestWideFramesOnGPU(t *testing.T) {
 			h.wideUntil = time.Now().Add(-time.Millisecond)
 			step("long after", false, false)
 			switch {
-			case !c.screen && len(g.set) != 0:
+			case (!c.screen || c.forceSRGB) && len(g.set) != 0:
 				t.Errorf("SetWide on an sRGB screen: %v", g.set)
 			case wide && len(g.set) != 2:
 				t.Errorf("SetWide %v, want once on and once off", g.set)

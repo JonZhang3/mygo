@@ -416,6 +416,7 @@ type formatState struct {
 
 // Renderer draws scenes into a CAMetalLayer it adds to a view's layer.
 type Renderer struct {
+	frameSubmissions       uint64
 	device, queue, sampler id
 	// shaderBytes holds the uniforms of the shader being drawn, laid out.
 	shaderBytes []byte
@@ -1168,6 +1169,7 @@ func (r *Renderer) waitLast() {
 // track records cb, committed, as the frame drawn with the instance buffer
 // encode used, and moves on to the next.
 func (r *Renderer) track(cb id) {
+	r.frameSubmissions++
 	r.inflight[r.inUse] = send(cb, "retain")
 	r.slot = (r.inUse + 1) % ringSize
 }
@@ -2180,6 +2182,9 @@ func (r *Renderer) Release() {
 		release(&r.device)
 	})
 }
+
+// FrameSubmissions reports how many frame command buffers were submitted.
+func (r *Renderer) FrameSubmissions() uint64 { return r.frameSubmissions }
 
 // FrameInfo describes the last frame for MYGO_FRAME_STATS.
 func (r *Renderer) FrameInfo() string {

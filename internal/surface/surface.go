@@ -63,6 +63,8 @@ type Conn struct {
 	// DevTools tells that the window's developer tools are on
 	// (PageOptions.DevTools): the content then opens its inspector.
 	DevTools bool
+	// ForceSRGB keeps native Content in the sRGB output color space.
+	ForceSRGB bool
 	// Invalidate asks for a frame; it is safe from any goroutine.
 	Invalidate func()
 	// Changed asks for a frame built anew after the app changed the state

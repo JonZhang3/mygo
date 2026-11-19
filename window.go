@@ -78,6 +78,9 @@ type WindowOptions struct {
 	// UseContentSize makes Width and Height describe the page area instead
 	// of the whole window.
 	UseContentSize bool
+	// ForceSRGB maps wide colors to sRGB in the native Content renderer.
+	// This keeps its onscreen buffers at eight bits per channel.
+	ForceSRGB bool
 	// X and Y of the top-left corner. The window is centered when both are
 	// zero.
 	X, Y                int
@@ -704,7 +707,7 @@ func newWindow(opts WindowOptions, bg, tint *background, native uintptr, flyout 
 		w.initState(popts)
 	}
 	if w.content {
-		w.attachContent(opts.Content)
+		w.attachContent(opts.Content, opts.ForceSRGB)
 	} else {
 		startContentRules(nw, opts.Page.ContentRules)
 	}

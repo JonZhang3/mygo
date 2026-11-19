@@ -1102,6 +1102,9 @@ func (rt *engine) paceSkips() bool {
 // the view shows.
 func (rt *engine) repaintNow() {
 	if !rt.repaintDue.IsZero() && !rt.now().Before(rt.repaintDue.Add(-time.Millisecond)) {
+		if rt.stats != nil {
+			rt.stats.animation++
+		}
 		rt.repaintDue = time.Time{}
 		rt.host.requestFrame()
 	}
@@ -1484,6 +1487,9 @@ func (rt *engine) askLook() {
 // changed asks the host for a frame built anew after the app changed what
 // the view shows, from outside the view (surface.Conn.Changed).
 func (rt *engine) changed() {
+	if rt.stats != nil {
+		rt.stats.application++
+	}
 	rt.repaintDue = time.Time{}
 	rt.askBuild()
 }
