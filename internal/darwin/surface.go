@@ -1478,6 +1478,21 @@ func registerSurfaceClass() {
 				}
 			}
 		}),
+		// AppKit offers Control-Tab and Control-Shift-Tab to
+		// performKeyEquivalent: and then to the key view loop, never to
+		// keyDown:, so the content would not see them. The surface that
+		// has the focus takes them as keys, as browsers do for tab
+		// switching; other equivalents go on to the menus.
+		method("performKeyEquivalent:", func(self id, _ objc.SEL, ev id) bool {
+			if uint16(send(ev, "keyCode")) != 0x30 || send(send(ev, "window"), "firstResponder") != self {
+				return false
+			}
+			if mods := eventMods(ev); mods&platform.ModCtrl == 0 || mods&platform.ModSuper != 0 {
+				return false
+			}
+			send(self, "keyDown:", uintptr(ev))
+			return true
+		}),
 		method("keyUp:", func(self id, _ objc.SEL, ev id) {
 			if s := b().surfaceOf(self); s != nil {
 				s.send(platform.SurfaceEvent{Kind: platform.KeyReleased, Key: eventKey(ev), PhysicalKey: physicalKey(ev), Code: eventKeyCode(ev), Mods: eventMods(ev)})
