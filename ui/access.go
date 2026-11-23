@@ -824,6 +824,7 @@ func (rt *engine) accessElement(t *platform.AccessTree, e *node, parent int, scr
 		if n.Role == platform.RoleRow && e.checked != 0 && n.States&platform.AccessSelectable == 0 {
 			chooseRow(t, len(t.Nodes)-1)
 		}
+		container := parent
 		parent = len(t.Nodes) - 1
 		if e.accChildren != nil {
 			// A copy, as adding moves the nodes.
@@ -841,6 +842,16 @@ func (rt *engine) accessElement(t *platform.AccessTree, e *node, parent int, scr
 		// own over it, as a code editor's find bar and what replaces its
 		// ranges, which are not the text: they show.
 		if leafRole(role) && (role != platform.RoleTextField || e.accFill == nil) {
+			// A custom text field that does not describe its text itself can
+			// still draw a toolbar over it. The platform shows the field as a
+			// leaf, so the toolbar goes beside it.
+			if role == platform.RoleTextField {
+				for ch := e.first; ch != nil; ch = ch.next {
+					if ch.role == RoleToolbar && ch.flags&flagAbsolute != 0 {
+						rt.accessElement(t, ch, container, scrolled, focused)
+					}
+				}
+			}
 			return
 		}
 	}
