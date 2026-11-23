@@ -750,8 +750,10 @@ type state struct {
 	x, y, w, h     float32
 	vx, vy, vw, vh float32
 	reposed        bool
-	parent         uint64
-	flags          uint32
+	// truncated tells that the last frame cut the element's text short.
+	truncated bool
+	parent    uint64
+	flags     uint32
 	// hoverBuilt tells that the pass building the element read its hover
 	// (Hovered): its hover changing builds the view anew. hoverLook tells
 	// that the last frame's painting did, as a button's styleFn picks its

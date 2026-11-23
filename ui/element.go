@@ -2267,6 +2267,14 @@ func (e *node) Bounds() Rect {
 	return transformRect(s.world, Rect{s.x, s.y, s.w, s.h})
 }
 
+// Truncated reports whether the previous frame cut the element's text
+// short, ending it with an ellipsis, as SingleLine or MaxLines do when it
+// does not fit: a tooltip repeating the text then shows what is hidden, and
+// one that would only repeat what shows can be left out.
+func (e *node) Truncated() bool {
+	return e.hasState() && e.st.truncated
+}
+
 // add appends a child.
 func (e *node) add(child *node) {
 	// Lists build rows as they lay out, after the list was measured.

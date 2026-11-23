@@ -1687,6 +1687,7 @@ func (rt *engine) commitElement(e *node, clip Rect, hidden bool) {
 		clip = rt.lift()
 	}
 	s.x, s.y, s.w, s.h = e.x, e.y, e.w, e.h
+	s.truncated = e.kind == kindText && e.tl != nil && e.tl.Truncated
 	if e.parent != nil {
 		s.parent = e.parent.id
 	} else {

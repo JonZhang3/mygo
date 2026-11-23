@@ -8707,6 +8707,20 @@ func (_handle Element) TruncateStart() Element {
 	return wrapElement(_node.TruncateStart())
 }
 
+// Truncated reports whether the previous frame cut the element's text
+// short, ending it with an ellipsis, as SingleLine or MaxLines do when it
+// does not fit: a tooltip repeating the text then shows what is hidden, and
+// one that would only repeat what shows can be left out.
+func (_handle Element) Truncated() bool {
+	_node := _handle.node()
+	if _node == nil {
+		return false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.Truncated()
+}
+
 // Underline underlines text.
 func (_handle Element) Underline() Element {
 	_node := _handle.node()
