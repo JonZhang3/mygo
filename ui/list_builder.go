@@ -78,6 +78,9 @@ func (e Element) ItemKey(key func(int) any) Element {
 	if n := e.node(); n != nil {
 		if s, ok := n.st.valueBinding.(*listSpec); ok {
 			s.state.Key = key
+			// The heights follow their rows before the app reads them
+			// to build the rows.
+			s.state.followKeys(s.count)
 		}
 	}
 	return e

@@ -271,6 +271,68 @@ func TestListKeys(t *testing.T) {
 	}
 }
 
+// Rows that come or go below the rows in view must not hand their heights to
+// the rows taking their places: what the app reads while building, as a chat
+// sizing a spacer from the rows below a message, is each row's own height,
+// and a row new to the list reads as not measured.
+func TestListKeysKeepHeightsBelowTheAnchor(t *testing.T) {
+	ids := []string{"a", "b", "c", "d", "end"}
+	height := map[string]float32{"a": 40, "b": 300, "c": 60, "d": 120, "end": 500, "new": 80}
+	var s ListState
+	var read func()
+	tt := NewTester(func(c *Context) {
+		list := List(c, &s, len(ids)).ItemKey(func(i int) any { return ids[i] })
+		if read != nil {
+			read()
+		}
+		list.Grow(1).Rows(func(r ListRow) { Box(r.Context).Height(height[ids[r.Index]]) })
+	}, 300, 2000)
+	tt.Frame()
+	at := func(key string) int {
+		for i, id := range ids {
+			if id == key {
+				return i
+			}
+		}
+		return -1
+	}
+	// Two rows below the first fold away: the rows after them keep their heights.
+	ids = []string{"a", "d", "end"}
+	read = func() {
+		read = nil // Only the pass before the rows are laid out.
+		for _, key := range ids {
+			i := at(key)
+			if got := s.RowsHeight(i, i+1); !s.RowMeasured(i) || got != float64(height[key]) {
+				t.Errorf("rows gone below: row %q reads %v (measured %v), not its own %v", key, got, s.RowMeasured(i), height[key])
+			}
+		}
+	}
+	tt.Frame()
+	// A row comes before the last: the last keeps its height, the new row is estimated.
+	ids = []string{"a", "d", "new", "end"}
+	read = func() {
+		read = nil // Only the pass before the rows are laid out.
+		if s.RowMeasured(2) {
+			t.Errorf("a row new to the list reads as measured, at %v", s.RowsHeight(2, 3))
+		}
+		if got := s.RowsHeight(3, 4); got != float64(height["end"]) {
+			t.Errorf("the last row reads %v after a row came before it, not %v", got, height["end"])
+		}
+	}
+	tt.Frame()
+	// A row replaced in place, the count unchanged: the new row is estimated.
+	ids = []string{"a", "d", "other", "end"}
+	height["other"] = 30
+	read = func() {
+		read = nil // Only the pass before the rows are laid out.
+		if s.RowMeasured(2) {
+			t.Errorf("a row replacing another in place reads as measured, at %v", s.RowsHeight(2, 3))
+		}
+	}
+	tt.Frame()
+	read = nil
+}
+
 func TestListFollowEnd(t *testing.T) {
 	n := 5
 	s := ListState{FollowEnd: true}
@@ -1005,7 +1067,7 @@ func TestListHeights(t *testing.T) {
 	for k := range 300 {
 		i := k * 7919 % n
 		h := float32(10 + k%13)
-		hs.set(i, h)
+		hs.set(i, h, nil)
 		want[i], known[i] = float64(h), true
 	}
 	check("measured")

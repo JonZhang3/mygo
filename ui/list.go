@@ -236,6 +236,9 @@ type ListState struct {
 	anchor    int
 	inset     float64
 	anchorKey any
+	// keysFollowed tells sync that followKeys already moved the heights
+	// with their rows this frame.
+	keysFollowed bool
 	// following tells that the list showed its end as the last layout left
 	// it, or was scrolled to it since: it follows the end while FollowEnd
 	// is set (follows), which each layout reads as it is then.
@@ -390,6 +393,43 @@ func (s *ListState) ScrollTo(row int, align Align) {
 func (s *ListState) ScrollAnchor() (row int, inset float64, ready bool) {
 	s.read = true
 	return s.anchor, s.inset, s.laidOut && s.first <= s.last
+}
+
+// RowMeasured reports whether row's height was measured in a layout, rather
+// than estimated, as a row new to the list or not yet in view is.
+func (s *ListState) RowMeasured(row int) bool {
+	return row >= 0 && row < s.heights.n && s.heights.measured(row)
+}
+
+// followKeys moves the heights measured to the rows now holding their keys,
+// as rows came, went or moved among n, and tells whether it did. It runs as
+// the app sets the keys, so the heights it reads while building are its
+// rows' own; sync then moves the anchor without shifting them again.
+func (s *ListState) followKeys(n int) bool {
+	if s.Key == nil {
+		return false
+	}
+	// A change of count may move any row; one that keeps the count, as a
+	// row replaced in place, is looked for among the rows last laid out.
+	lo, hi := 0, s.heights.n-1
+	if n == s.heights.n {
+		lo, hi = s.first, s.last
+	}
+	if !s.heights.moved(lo, hi, n, s.Key) {
+		return false
+	}
+	s.heights.realign(n, s.Key)
+	s.header.ok = false
+	s.keysFollowed = true
+	return true
+}
+
+// rowKey is row i's ItemKey, or nil without one.
+func (s *ListState) rowKey(i int) any {
+	if s.Key == nil {
+		return nil
+	}
+	return s.Key(i)
 }
 
 // RowsHeight reports the measured or estimated height of the range [first, end).
@@ -696,12 +736,19 @@ func (s *ListState) sync(e *node, n int) {
 	}
 	s.heights.def = float64(e.c.theme.Space(8))
 	if s.Key != nil && n > 0 {
+		// Rows came or went: each height measured follows its row, so a
+		// row taking another's place is not placed at that one's height,
+		// wherever the change is, above the anchor or below it.
+		realigned := s.followKeys(n) || s.keysFollowed
+		s.keysFollowed = false
 		if k := s.anchorKey; k != nil {
 			if j, ok := s.find(k, s.anchor, n); ok && j != s.anchor {
-				// Rows came or went above it: the heights known move with
-				// the rows around it.
-				s.heights.resize(max(n, s.heights.n))
-				s.heights.shift(j - s.anchor)
+				if !realigned {
+					// Rows came or went above it: the heights known move
+					// with the rows around it.
+					s.heights.resize(max(n, s.heights.n))
+					s.heights.shift(j - s.anchor)
+				}
 				s.anchor = j
 				s.header.ok = false
 			}
@@ -1594,7 +1641,7 @@ func (e *node) layoutList(w, h float32) {
 	for k := range f.rows {
 		r := &f.rows[k]
 		f.at[r.i] = k
-		hs.set(r.i, heightAt(r.e, cw, inf))
+		hs.set(r.i, heightAt(r.e, cw, inf), s.rowKey(r.i))
 	}
 	// ensure builds and measures row i if the list lacks it.
 	ensure := func(i int) bool {
@@ -1606,7 +1653,7 @@ func (e *node) layoutList(w, h float32) {
 		}
 		r := f.buildLate(i)
 		f.at[i] = len(f.rows) - 1
-		hs.set(i, heightAt(r, cw, inf))
+		hs.set(i, heightAt(r, cw, inf), s.rowKey(i))
 		return true
 	}
 	ht := hs.height
@@ -2009,7 +2056,7 @@ func (e *node) pinHeader(first, hi int, top float64) *node {
 		f.buildLate(hh)
 		k = len(f.rows) - 1
 		f.at[hh] = k
-		s.heights.set(hh, heightAt(f.rows[k].e, s.width, inf))
+		s.heights.set(hh, heightAt(f.rows[k].e, s.width, inf), s.rowKey(hh))
 		f.rows[k].y = f.rows[f.at[first]].y - (s.heights.top(first, s.gap) - s.heights.top(hh, s.gap))
 	}
 	size := s.heights.height(hh)
@@ -2093,6 +2140,9 @@ type heightBlock struct {
 	h     [listBlock]float32
 	known uint64
 	sum   float64
+	// keys are the keys of the rows measured, with an ItemKey, so the
+	// heights follow their rows wherever rows come, go or move.
+	keys [listBlock]any
 }
 
 // block returns where block b is or would go among the blocks, and
@@ -2181,8 +2231,8 @@ func (hs *listHeights) rowAt(y, gap float64) int {
 	return i
 }
 
-// set records that row i measured h.
-func (hs *listHeights) set(i int, h float32) {
+// set records that row i, with key (nil without an ItemKey), measured h.
+func (hs *listHeights) set(i int, h float32, key any) {
 	if i < 0 || i >= hs.n {
 		return
 	}
@@ -2193,6 +2243,7 @@ func (hs *listHeights) set(i int, h float32) {
 		hs.blocks = slices.Insert(hs.blocks, k, new(heightBlock))
 	}
 	blk := hs.blocks[k]
+	blk.keys[j] = key
 	bit := uint64(1) << j
 	if blk.known&bit != 0 && blk.h[j] == h {
 		return
@@ -2234,11 +2285,66 @@ func (hs *listHeights) shift(d int) {
 	for k, blk := range blocks {
 		for at := range listBlock {
 			if blk.known&(1<<at) != 0 {
-				hs.set(ids[k]*listBlock+at+d, blk.h[at])
+				hs.set(ids[k]*listBlock+at+d, blk.h[at], blk.keys[at])
 			}
 		}
 	}
 	hs.dirty = true
+}
+
+// measured tells whether row i's height was measured rather than estimated.
+func (hs *listHeights) measured(i int) bool {
+	k, ok := hs.block(i / listBlock)
+	return ok && hs.blocks[k].known&(1<<(i%listBlock)) != 0
+}
+
+// moved tells whether a measured row among rows [lo, hi] no longer holds
+// the key it was measured with, as rows came, went or moved, among n rows.
+func (hs *listHeights) moved(lo, hi, n int, key func(int) any) bool {
+	for k, blk := range hs.blocks {
+		if (hs.ids[k]+1)*listBlock <= lo || hs.ids[k]*listBlock > hi {
+			continue
+		}
+		for at := range listBlock {
+			i := hs.ids[k]*listBlock + at
+			if i < lo || i > hi || blk.known&(1<<at) == 0 || blk.keys[at] == nil {
+				continue
+			}
+			if i >= n || key(i) != blk.keys[at] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// realign makes it n rows and moves each height measured to the row now
+// holding its key. A height whose row is gone is forgotten; a row not
+// measured keeps the estimate.
+func (hs *listHeights) realign(n int, key func(int) any) {
+	type entry struct {
+		key any
+		h   float32
+	}
+	var known []entry
+	for _, blk := range hs.blocks {
+		for at := range listBlock {
+			if blk.known&(1<<at) != 0 && blk.keys[at] != nil {
+				known = append(known, entry{blk.keys[at], blk.h[at]})
+			}
+		}
+	}
+	rows := make(map[any]int, n)
+	for i := range n {
+		rows[key(i)] = i
+	}
+	hs.clear()
+	hs.n = n
+	for _, e := range known {
+		if i, ok := rows[e.key]; ok {
+			hs.set(i, e.h, e.key)
+		}
+	}
 }
 
 // clear forgets every height.
