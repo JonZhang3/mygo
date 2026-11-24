@@ -48,6 +48,15 @@ func (v *EmbeddedView) TabOut(back bool) {
 	}
 }
 
+// Pressed tells MyGo that a button went down on the guest, which takes its
+// own presses: open popovers close as they do for a press on a web view.
+// Call it on the main thread while AppKit dispatches that press.
+func (v *EmbeddedView) Pressed() {
+	if native, ok := v.view.(interface{ EmbeddedPressed() }); ok {
+		native.EmbeddedPressed()
+	}
+}
+
 // RestoreHostFocus sends subsequent keyboard input to MyGo.
 func (v *EmbeddedView) RestoreHostFocus() {
 	if native, ok := v.view.(interface{ EmbeddedRestoreHostFocus() }); ok {

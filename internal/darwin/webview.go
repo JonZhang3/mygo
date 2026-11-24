@@ -417,6 +417,22 @@ func (w *window) tabOut(back bool) {
 
 func (w *window) EmbeddedTabOut(back bool) { w.tabOut(back) }
 
+// EmbeddedPressed tells the content that a button went down on the
+// embedded guest, whose own view takes its presses, as a press on a web
+// view does: popovers close for it. It reads the press AppKit is
+// dispatching, so the guest calls it from that dispatch.
+func (w *window) EmbeddedPressed() {
+	ev := send(theBackend.app, "currentEvent")
+	if ev == 0 {
+		return
+	}
+	// NSEventTypeLeftMouseDown, RightMouseDown and OtherMouseDown.
+	button, ok := map[int]int{1: 0, 3: 1, 25: 2}[sendInt(ev, "type")]
+	if ok {
+		w.pressed(ev, button)
+	}
+}
+
 func (w *window) EmbeddedRestoreHostFocus() {
 	if s := w.host.surface; s != nil && w.hasKeyboard() {
 		send(w.win, "makeFirstResponder:", uintptr(s.view))
