@@ -318,3 +318,54 @@ func TestInlineFadeNested(t *testing.T) {
 		t.Errorf("the paragraph's own span has color %v", c)
 	}
 }
+
+// An inline element's pose fades its words in frames that only paint, as
+// text streaming into a paragraph fades in piece by piece, and leaves the
+// line's layout as it is. AnimatePoseFrom starts a word built for the first
+// time faded out, so that it fades in without another build.
+func TestInlinePoseFade(t *testing.T) {
+	black := RGB(0, 0, 0)
+	builds := 0
+	var word *node
+	view := func(c *context) {
+		builds++
+		coreColumn(c).Background(RGB(255, 255, 255)).Padding(10).AlignItems(Start).Children(func() {
+			coreText(c, "").FontSize(40).TextColor(black).Children(func() {
+				coreText(c, "█ ")
+				word = coreText(c, "█████")
+				word.AnimatePoseFrom(Pose{Fade: 1}, Pose{}, Animation{Duration: 400 * time.Millisecond, Ease: Linear})
+			})
+		})
+	}
+	darkest := func(img *image.RGBA) uint8 {
+		low := uint8(255)
+		for _, r := range word.frags {
+			for y := int(r.Y); y < int(r.Y+r.H); y++ {
+				for x := int(r.X); x < int(r.X+r.W); x++ {
+					low = min(low, img.RGBAAt(x, y).R)
+				}
+			}
+		}
+		return low
+	}
+	tt := coreNewTester(view, 400, 100)
+	built := builds
+	if got := darkest(tt.Image()); got < 240 {
+		t.Fatalf("a word coming in faded out shows red %d", got)
+	}
+	frags := slices.Clone(word.frags)
+	tt.Advance(200 * time.Millisecond)
+	if got := darkest(tt.Image()); got < 100 || got > 160 {
+		t.Errorf("halfway through its fade the word's darkest red is %d", got)
+	}
+	tt.Advance(300 * time.Millisecond)
+	if got := darkest(tt.Image()); got != 0 {
+		t.Errorf("after its fade the word's darkest red is %d", got)
+	}
+	if builds != built {
+		t.Errorf("the fade built the view %d more times", builds-built)
+	}
+	if !slices.Equal(word.frags, frags) {
+		t.Errorf("the fade moved the word to %v from %v", word.frags, frags)
+	}
+}

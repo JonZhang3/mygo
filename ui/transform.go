@@ -548,6 +548,43 @@ func (p *Painter) inlineTransforms() bool {
 	return walk(p.inline)
 }
 
+// inlineFades reports whether an inline element of the text being painted
+// fades by its pose (AnimatePose's Fade), which then fades its glyphs.
+func (p *Painter) inlineFades() bool {
+	if p.inline == nil {
+		return false
+	}
+	var walk func(*node) bool
+	walk = func(e *node) bool {
+		for ch := e.first; ch != nil; ch = ch.next {
+			if ch.poseFade > 0 || walk(ch) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(p.inline)
+}
+
+// inlineFade returns how opaque the poses of the inline elements holding
+// rune runeIndex of the text being painted leave its glyph.
+func (p *Painter) inlineFade(runeIndex int) float32 {
+	a := float32(1)
+	offset := 0
+	for e := p.inline; e != nil; {
+		var next *node
+		for ch := e.first; ch != nil; ch = ch.next {
+			if runeIndex >= offset+ch.runes[0] && runeIndex < offset+ch.runes[1] {
+				next, offset = ch, offset+ch.runes[0]
+				a *= 1 - ch.poseFade
+				break
+			}
+		}
+		e = next
+	}
+	return a
+}
+
 func (p *Painter) inlineTransform(runeIndex int) scene.Affine {
 	if p.inline == nil {
 		return scene.Affine{}

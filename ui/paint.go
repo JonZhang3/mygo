@@ -1025,6 +1025,9 @@ func (p *Painter) textForeground(l *text.Layout, x, y float32, color Color, ts t
 	shade := text.ShadeOf(color.R, color.G, color.B)
 	// Inline transforms do not change while the text paints; look for them once.
 	moves := p.inlineTransforms()
+	// Nor do the fades of inline elements' poses, which change in frames
+	// that only paint, unlike the spans' colors, made as the view builds.
+	fades := p.inlineFades()
 	clips := !p.transform.Set && !moves
 	if paintShadows != nil && (ts.shadow.color.A > 0 || sp != nil && sp.shadows()) {
 		var spans spanPaint
@@ -1078,6 +1081,13 @@ func (p *Painter) textForeground(l *text.Layout, x, y float32, color Color, ts t
 			gi := sys.Glyph(g.Font, g.ID, s, pen, glyphShade, p.opaque && !moves)
 			if !gi.OK {
 				continue
+			}
+			if fades {
+				f := p.inlineFade(g.Cluster)
+				if f <= 0 {
+					continue // faded out: its advance stays
+				}
+				glyphColor = glyphColor.Alpha(f)
 			}
 			glyphColor = glyphColor.Alpha(p.opacity)
 			gb := glyphBaseline(sys, &g, line, y, baseline, gs)

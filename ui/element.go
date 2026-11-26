@@ -453,9 +453,13 @@ type node struct {
 	pose     Pose
 	poseAnim Animation
 	poseSet  bool
-	poseM    scene.Affine
-	poseFade float32
-	reposed  bool
+	// poseFrom is where an element that was not posed in the frame before
+	// starts, when poseFromSet (AnimatePoseFrom).
+	poseFrom    Pose
+	poseFromSet bool
+	poseM       scene.Affine
+	poseFade    float32
+	reposed     bool
 	// ink bounds, in the window, all that the element and those inside it
 	// may paint, as commit found it: x0, y0, x1, y1. Unless noCull, what
 	// it paints is no more than that, so that painting skips it where ink

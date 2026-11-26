@@ -53,6 +53,11 @@ const poseFadeCh = 4
 //
 // An element appearing in a parent that the frame before showed comes in
 // with the Enter of its Transition too.
+//
+// An inline element of a text fades its words with its pose's Fade, in
+// frames that only paint, and leaves the line's layout as it is: text
+// streaming in can fade each piece as it arrives. Its words do not move
+// with the pose.
 func (e *node) AnimatePose(p Pose, a Animation) *node {
 	for _, v := range p.vals() {
 		finiteTransform(v)
@@ -64,9 +69,26 @@ func (e *node) AnimatePose(p Pose, a Animation) *node {
 		a.Spring.physics()
 	}
 	e.pose, e.poseAnim, e.poseSet = p, a, true
+	e.poseFromSet = false
 	linkGroups() // its Fade fades a group
 
 	scene.FoldTranslations() // renderers draw poses that only move as untransformed content
+	return e
+}
+
+// AnimatePoseFrom is AnimatePose for an element that comes in from a pose:
+// one that the frame before did not pose, as one built for the first time,
+// starts at from and goes to to as a says, in the frame that builds it,
+// without the extra frame AnimatePose's coming in takes. Later frames pose
+// it as AnimatePose does, from where it is.
+//
+//	word.AnimatePoseFrom(ui.Pose{Fade: 1}, ui.Pose{}, ui.Animation{Duration: 300 * time.Millisecond})
+func (e *node) AnimatePoseFrom(from, to Pose, a Animation) *node {
+	for _, v := range from.vals() {
+		finiteTransform(v)
+	}
+	e.AnimatePose(to, a)
+	e.poseFrom, e.poseFromSet = from, true
 	return e
 }
 
@@ -94,10 +116,15 @@ func (rt *engine) samplePose(e *node) {
 	to := e.pose.vals()
 	r := st.pose
 	if r == nil || r.frame+1 < rt.frame {
-		// Not posed in the frame before: it shows there at once.
+		// Not posed in the frame before: it shows there at once, or
+		// starts where AnimatePoseFrom says.
 		r = &poseRec{}
 		st.pose = r
-		for i, v := range to {
+		from := to
+		if e.poseFromSet {
+			from = e.poseFrom.vals()
+		}
+		for i, v := range from {
 			r.ch[i] = channel{value: float64(v), target: float64(v), at: now}
 		}
 	}

@@ -3678,6 +3678,11 @@ func (_handle Element) AnimateColor(key any, target Color, a Animation) Color {
 //
 // An element appearing in a parent that the frame before showed comes in
 // with the Enter of its Transition too.
+//
+// An inline element of a text fades its words with its pose's Fade, in
+// frames that only paint, and leaves the line's layout as it is: text
+// streaming in can fade each piece as it arrives. Its words do not move
+// with the pose.
 func (_handle Element) AnimatePose(p Pose, a Animation) Element {
 	_node := _handle.node()
 	if _node == nil {
@@ -3686,6 +3691,23 @@ func (_handle Element) AnimatePose(p Pose, a Animation) Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.AnimatePose(p, a))
+}
+
+// AnimatePoseFrom is AnimatePose for an element that comes in from a pose:
+// one that the frame before did not pose, as one built for the first time,
+// starts at from and goes to to as a says, in the frame that builds it,
+// without the extra frame AnimatePose's coming in takes. Later frames pose
+// it as AnimatePose does, from where it is.
+//
+//	word.AnimatePoseFrom(ui.Pose{Fade: 1}, ui.Pose{}, ui.Animation{Duration: 300 * time.Millisecond})
+func (_handle Element) AnimatePoseFrom(from, to Pose, a Animation) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.AnimatePoseFrom(from, to, a))
 }
 
 // AnimateTo returns a value that goes to target as a says, and keeps
