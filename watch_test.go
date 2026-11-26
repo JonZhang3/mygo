@@ -1477,6 +1477,29 @@ func TestFileWatchHintsOnlySubtree(t *testing.T) {
 	}
 }
 
+// An editor following a file inside a large tree needs its exact path even
+// when the containing directory changed in the same batch.
+func TestFileWatchPathHints(t *testing.T) {
+	fb.FileWatchSubtree = true
+	defer func() { fb.FileWatchSubtree = false }()
+	w, err := WatchFiles(context.Background(), t.TempDir(), FileWatchOptions{Recursive: true, PathHints: true, Debounce: 20 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	for _, p := range []string{"src", "src/file"} {
+		fileWatchTestNotice(t, w, ".", platform.FileWatchNotice{Name: p})
+	}
+	want := []FileEvent{{Op: FilePathHint, Path: "src"}, {Op: FilePathHint, Path: "src/file"}}
+	if got := fileWatchTestBatch(t, w); !slices.Equal(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	fileWatchTestNotice(t, w, ".", platform.FileWatchNotice{Err: platform.ErrFileWatchOverflow})
+	if got := fileWatchTestHints(t, w); !slices.Equal(got, []string{"."}) {
+		t.Fatal(got)
+	}
+}
+
 // A hints-only watch of a file hints at it, not at the other entries of
 // its directory.
 func TestFileWatchHintsOnlyFile(t *testing.T) {

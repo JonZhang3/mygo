@@ -365,6 +365,16 @@ func (s *fileWatchHints) mark(n platform.FileWatchNotice) error {
 	if !s.w.opts.Recursive && dir != "." || s.ignores(dir) {
 		return nil
 	}
+	if s.w.opts.PathHints && s.subtree {
+		if !s.all {
+			s.hints[child] = true
+			if len(s.hints) > s.w.opts.MaxEntries {
+				clear(s.hints)
+				s.all = true
+			}
+		}
+		return nil
+	}
 	s.hints[dir] = true
 	if s.w.opts.Recursive && !s.subtree {
 		// It may be a directory to enroll, or one enrolled that moved.
@@ -464,6 +474,16 @@ func (s *fileWatchHints) update() ([]FileEvent, error) {
 			}
 		}
 		clear(s.walks)
+	}
+	if s.w.opts.PathHints && s.subtree && !s.hints["."] {
+		// A changed directory and an entry under it are independent hints.
+		events := make([]FileEvent, 0, len(s.hints))
+		for p := range s.hints {
+			events = append(events, FileEvent{Op: FilePathHint, Path: p})
+		}
+		sort.Slice(events, func(i, j int) bool { return events[i].Path < events[j].Path })
+		clear(s.hints)
+		return events, nil
 	}
 	events := fileWatchHintEvents(s.hints)
 	clear(s.hints)

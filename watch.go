@@ -34,6 +34,9 @@ const (
 	// FileWatchOptions.HintsOnly reports nothing else, but a FileRemove
 	// of "." when its directory goes away.
 	FileHint FileOp = "hint"
+	// FilePathHint names an entry reported by a recursive native stream.
+	// Its current existence and type must be checked by the consumer.
+	FilePathHint FileOp = "path-hint"
 )
 
 // FileEvent is a change in a watched file or directory. A watch compares
@@ -94,6 +97,10 @@ type FileWatchOptions struct {
 	// watches as a tree; on Linux it enrolls every directory, without
 	// stat'ing what is in them.
 	HintsOnly bool
+	// PathHints selects snapshot-free hints and preserves individual entry
+	// paths on backends with native recursive targets. FileHint still
+	// requests a subtree refresh on overflow or a coarser backend.
+	PathHints bool
 }
 
 // ErrWatchLimit is what a watch stops with when its directory has more
@@ -439,7 +446,7 @@ func (w *FileWatcher) run(ready chan error) {
 	var terminal error
 	discard := true
 	var scan fileWatchLooker = newFileWatchScan(w)
-	if w.opts.HintsOnly {
+	if w.opts.HintsOnly || w.opts.PathHints {
 		scan = newFileWatchHints(w)
 	}
 	defer func() {
