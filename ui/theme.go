@@ -81,6 +81,9 @@ type Theme struct {
 	// FontSize is the size of text, Font its family ("" is the system's).
 	FontSize float32
 	Font     string
+	// AntialiasedText draws widget text on macOS without font smoothing,
+	// keeping grayscale antialiasing. Painter.Glyphs uses its Font options.
+	AntialiasedText bool
 	// TooltipDelay is how long the pointer rests on an element before its
 	// tooltip shows (Tooltip, TooltipBase): 0 is 0.6 seconds, and a
 	// negative delay shows it at once. Within two thirds of it after

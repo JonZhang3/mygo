@@ -205,7 +205,7 @@ func (p *Painter) TextLine(l *text.Layout, x, y float32, color func(cluster int)
 			continue
 		}
 		c := color(g.Cluster)
-		shade := text.ShadeOf(c.R, c.G, c.B)
+		shade := p.textShade(c)
 		gi := sys.Glyph(g.Font, g.ID, s, pen, shade, p.opaque)
 		if !gi.OK {
 			continue

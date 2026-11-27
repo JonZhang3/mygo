@@ -382,9 +382,13 @@ func (p *Painter) morph(e *node, r *contentRec, x, y float32, ts textStyle, span
 	// shadows they cast paint under those (TextShadow).
 	var stroke float32
 	var shadow bool
+	flat := p.textShade(color) == text.Flat
 	show := func(g text.Glyph, _ []rune, rx, ry, gx, gy, size float32, c Color, shade text.Shade, alpha float32) {
 		if alpha <= 0.001 || size <= 0 {
 			return
+		}
+		if flat {
+			shade = text.Flat
 		}
 		pen, base := rx*s, ry*s
 		origin, baseline := sys.Origin(g.Font, s, pen, p.opaque), sys.Baseline(base)
